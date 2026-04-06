@@ -52,3 +52,21 @@ Now I can start a timer, and after I stop it, the app will automatically add thi
 Now, I do not know whether I want to do **Sports**, **Self-Care**, or **Languages**. Which is why earlier, I assigned each of these categories a multiplier as well. I assigned a **2.0 multiplier to Sports**, a **1.0 multiplier to Self-Care**, and a **0.3 multiplier to Languages**. This way I do three times as much self-care as I learn languages, and twice as much sports as I do self-care.
 
 Now I can tell the app to give me an activity out of all of these categories. It will then give me an activity.
+
+Current project status
+~~~~~~~~~~~~~~~~~~~~~~
+
+As of 2026-04-06, the first working prototype already includes:
+
+* a React frontend in ``frontend/app`` and a Go backend in ``backend``
+* user accounts with email verification and session-cookie authentication
+* user-scoped CRUD for categories, activities, and time entries
+* a first recommendation flow that returns the single best activity based on how far behind it is relative to the configured multipliers
+* stateless ``skip`` support for asking for the next best recommendation
+* a default ``root`` category so users do not have to organize everything into custom categories
+
+Still planned for later:
+
+* use available time windows and ``minimum_minutes`` more directly in the recommendation logic
+* add timer and graph/analytics views
+* continue polishing the frontend UX

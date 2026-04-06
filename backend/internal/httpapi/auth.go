@@ -192,24 +192,7 @@ func (h *AuthHandler) handleResendVerification(w http.ResponseWriter, r *http.Re
 }
 
 func (h *AuthHandler) writeAuthError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, auth.ErrInvalidInput):
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, auth.ErrDuplicateUser):
-		writeErrorJSON(w, http.StatusConflict, err.Error())
-	case errors.Is(err, auth.ErrInvalidCredentials):
-		writeErrorJSON(w, http.StatusUnauthorized, "invalid credentials")
-	case errors.Is(err, auth.ErrEmailNotVerified):
-		writeErrorJSON(w, http.StatusForbidden, "email address has not been verified yet")
-	case errors.Is(err, auth.ErrInvalidToken):
-		writeErrorJSON(w, http.StatusBadRequest, "invalid or expired token")
-	case errors.Is(err, auth.ErrAlreadyVerified):
-		writeErrorJSON(w, http.StatusConflict, "email already verified")
-	case errors.Is(err, auth.ErrUnauthenticated):
-		writeErrorJSON(w, http.StatusUnauthorized, "authentication required")
-	default:
-		writeErrorJSON(w, http.StatusInternalServerError, "internal server error")
-	}
+	writeAuthServiceError(w, err)
 }
 
 func (h *AuthHandler) sessionTokenFromRequest(r *http.Request) (string, error) {

@@ -31,6 +31,8 @@ var (
 
 var emailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
+const defaultRootCategoryName = "root"
+
 type Mailer interface {
 	SendVerificationEmail(ctx context.Context, toEmail, username, verificationURL string) error
 }
@@ -133,6 +135,10 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (RegisterRe
 			return RegisterResult{}, ErrDuplicateUser
 		}
 		return RegisterResult{}, fmt.Errorf("create user: %w", err)
+	}
+
+	if err := s.ensureDefaultRootCategory(ctx, rec.ID); err != nil {
+		return RegisterResult{}, err
 	}
 
 	verificationURL, err := s.issueVerificationToken(ctx, rec.ID, rec.Username, rec.Email)
@@ -346,6 +352,21 @@ func (s *Service) findUserByIdentifier(ctx context.Context, identifier string) (
 		&rec.CreatedAt,
 	)
 	return rec, err
+}
+
+func (s *Service) ensureDefaultRootCategory(ctx context.Context, userID int64) error {
+	if _, err := s.db.Exec(
+		ctx,
+		`INSERT INTO categories (user_id, name, multiplier)
+		 VALUES ($1, $2, 1.0)
+		 ON CONFLICT (user_id, name) DO NOTHING`,
+		userID,
+		defaultRootCategoryName,
+	); err != nil {
+		return fmt.Errorf("create default root category: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Service) issueVerificationToken(ctx context.Context, userID int64, username, email string) (string, error) {

@@ -12,8 +12,10 @@ As of 2026-04-06, the backend foundation for this flow has been added:
 * the PostgreSQL schema includes users, sessions, and verification tokens
 * session-cookie auth is wired in
 * verification emails currently use a development log mailer
+* the core auth flow has been runtime-verified locally for register, verify-email, login, and ``/auth/me``
+* each user now gets a default ``root`` category, and protected domain CRUD is live on top of the auth layer
 
-The system still needs end-to-end runtime verification and frontend integration.
+The system still needs broader automated tests, frontend polish, and additional production-readiness work.
 
 Purpose
 -------
@@ -276,15 +278,19 @@ The following items are already in place:
 3. password hashing and token generation helpers have been added
 4. register, verify-email, login, logout, resend-verification, and ``/auth/me`` routes have been wired
 5. a development mailer logs verification links for local testing
+6. authenticated category CRUD has been added and locally verified for user isolation behavior
+7. authenticated activity and time-entry CRUD have been added and locally verified for user isolation behavior
+8. shared auth middleware and request-context user lookup have been added for protected domain routes
+9. a first recommendation endpoint is now wired on top of the user-owned domain model, and users get a default ``root`` category automatically
 
 The next AI or developer should continue with these remaining steps:
 
-1. run the backend against a real local PostgreSQL instance and verify the auth flow end-to-end
-2. add automated tests for registration, login, verification, session expiry, and user isolation
-3. add authentication middleware or request context helpers for protected domain routes
-4. update all future category, activity, and time-entry queries to filter by authenticated ``user_id``
-5. integrate a real email provider when needed for non-development environments
-6. build the React auth UI against the existing endpoints
+1. expand automated tests for registration, login, verification, session expiry, broader user isolation, and recommendation edge cases
+2. build and polish the React auth UI against the existing endpoints
+3. integrate a real email provider when needed for non-development environments
+4. refine the new recommendation logic with available-time awareness and better alternative suggestions
+5. keep ``progress_todo.rst`` updated as milestones are completed
+6. keep refining protected-route structure as the API surface grows
 
 Guardrails for future AI work
 -----------------------------
@@ -319,4 +325,4 @@ The first milestone should be considered fully complete only when all of the fol
 * user data is isolated by ``user_id`` in all relevant queries
 * tests cover the main success and failure paths
 
-Current note: the code foundation for this milestone has been added, but runtime validation and automated tests are still outstanding.
+Current note: the auth foundation plus user-scoped category, activity, and time-entry CRUD are now in place and have been runtime-verified locally. Shared auth middleware, a default ``root`` category, and a first recommendation flow are also in place, while broader automated test coverage and frontend polish are still outstanding.

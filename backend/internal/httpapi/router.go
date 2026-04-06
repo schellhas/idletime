@@ -19,6 +19,18 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool, authService *auth.Service) h
 	authHandler := NewAuthHandler(cfg, authService)
 	authHandler.RegisterRoutes(mux)
 
+	categoryHandler := NewCategoryHandler(cfg, db, authService)
+	categoryHandler.RegisterRoutes(mux)
+
+	activityHandler := NewActivityHandler(cfg, db, authService)
+	activityHandler.RegisterRoutes(mux)
+
+	timeEntryHandler := NewTimeEntryHandler(cfg, db, authService)
+	timeEntryHandler.RegisterRoutes(mux)
+
+	recommendationHandler := NewRecommendationHandler(cfg, db, authService)
+	recommendationHandler.RegisterRoutes(mux)
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -70,7 +82,7 @@ func withCORS(cfg config.Config, next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
