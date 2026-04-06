@@ -1,16 +1,22 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:app/main.dart';
+import 'package:app/models/activity.dart';
+import 'package:app/models/category.dart';
 
 void main() {
-  testWidgets('app shows the core object overview', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(const IdletimeApp());
+  test('category and activity map serialization works', () {
+    const category = Category(id: 1, name: 'Sport', multiplier: 2.0);
+    const activity = Activity(
+      id: 2,
+      categoryId: 1,
+      name: 'Climbing',
+      multiplier: 1.5,
+      minimumMinutes: 60,
+      trackedMinutes: 120,
+    );
 
-    expect(find.text('idletime'), findsOneWidget);
-    expect(find.text('Core objects ready'), findsOneWidget);
-    expect(find.text('Sport'), findsOneWidget);
-    expect(find.text('Climbing'), findsOneWidget);
+    expect(Category.fromMap(category.toMap()).name, 'Sport');
+    expect(Activity.fromMap(activity.toMap()).name, 'Climbing');
+    expect(Activity.fromMap(activity.toMap()).trackedMinutes, 120);
   });
 }
