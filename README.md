@@ -1,58 +1,47 @@
 # idletime
 
-## Advertisement-style description
+## Problem
 
-I have too many interests — and maybe you do too.
+I have too many interests and too little time.
 
-Then, when you suddenly have `30 minutes` or `40 minutes`, you may not know what to spend it on. Not because you have nothing to do, but because you care about too many things at once: sports, leisure, productivity, learning, creativity. In a small timeframe, doing something random can feel pointless. Will you ever really see progress this way?
+When a time slot finally opens up for me, there are 2 issues:
+- I feel overwhelmed by all the things I could spend this time frame on
+- I don't feel progress in my interests because I only do one of them for a short time
 
-`idletime` is the app for that problem.
+`idletime` addresses both.
 
-It helps you use these small pockets of time with confidence. You can continuously add small amounts of time to the things you care about, see that the time is not lost, and make sure you are actually doing your activities as much as you want to in relation to each other.
+## Solution
 
-The idea is simple: first, you add the activities you like. Then you assign them multipliers.
+It lets you input all your interests/activities. It lets you assign how much you want to do each activities, in relation to each other.  
+The app will tell you what activity to do right now. When you are done, it will add the time spent to your activity.  
+Then you can look at a graph, and see your progress.
 
-Let us say you want to stay fit. Your favorite sports are `climbing`, `swimming`, and `muay thai`.
+## Example
 
-You could set:
-- `swimming = 1.0`
-- `climbing = 1.5`
-- `muay thai = 2.0`
+### Setup
 
-That means you want to do twice as much muay thai as swimming, and 1.5 times as much climbing as swimming.
+I have many interests I want to keep track of.
 
-Now, when you say:
+- For **sports**, I like to do: **Swimming**, **Jogging**, **Gym**.
+- For **self-care**, I like to do: **Reading**, **Bathing**, **Journaling**.
+- I want to learn: **Spanish**, **Italian**.
 
-> `I have 40 minutes, give me an activity.`
+I want to do **2 times** as much **swimming** as I do **jogging**. I also want to go to the **gym** **1.5 times** as much as I go **jogging**.
 
-The app looks at how much time you have already logged for each activity and compares that against the multipliers you chose. In other words, it keeps track of which activity is currently most behind its desired share. Then it recommends the activity with the largest deficit.
+So I input the following activities into the app:
 
-This way, the app does not just give you something random. It gives you the thing that makes the most sense for your longer-term balance.
+- `swimming = 2.0`
+- `jogging = 1.0`
+- `gym = 1.5`
 
-The app also respects minimum time requirements. For example, `swimming` might have a minimum time because going there, changing clothes, showering, and coming back makes `5 minutes` meaningless. So when you first add an activity, you can define its minimum useful time. If you only have `5 minutes`, the app will skip swimming and recommend something else.
+I can also assign `minimal_time`s to these activities. Which means: When I go swimming, I need at least 30 minutes to do so. Drive there, change, shower... So I couldn't go swimming in a 20 minute time window. The app needs to know that. So i assign `swimming` a `minimal_time` of `20 minutes`.
 
-And it does not stop at sport.
+### Usage
 
-You can also create other categories, for example `leisure`, and put things like `reading`, `drawing`, and `making music` in there, again with the multipliers you want.
+When I now start the app, and tell it the size of my time-frame, it will recommend me whatever activity I currently have to do, in order for my activities to stay in the relation that I assigned to them.
 
-If you do not even know whether you want to do `sport` or `leisure`, you can simply tell the app to choose from either category. It will then look across all allowed activities and again recommend the one with the largest deficit.
+Now I can start a timer, and after I stop it, the app will automatically add this time to the activity. I can also choose to input the time manually, or, when I don't want to do this activity right now, to `skip` and be recommended a different activity.
 
-Once the app gives you an activity, you can start a timer. When you pause the timer, the app lets you conveniently add the saved time to that activity. You can also adjust the time if something got in the way. If you do not want that suggestion, you can choose `recommend something else` and get the next-most-deficient activity.
+Now, I don't know wether I want to do **Sports**, **Self-Care** or **Languages**. Which is why earlier, I assigned each of these categories a multiplier aswell. I assigned a **2.0 multiplier to Sports**, a **1.0 Multiplier to Self-Care**, and a **0.3 multiplier to Languages**. This way I do three times as much Self-Care as I learn languages, and twice as much sports as I do self-care.
 
-If you already know what you want to do, you can simply add the time manually. The app will take that into account the next time it calculates which activity is most behind.
-
-## Neutral description
-
-`idletime` is an app that helps choose what to do with the time available right now while balancing multiple interests over the long term.
-
-The user defines:
-- categories such as `sport`, `leisure`, or `productivity`
-- activities inside those categories
-- multipliers that express how much they want to do one activity or category relative to another
-- a minimum useful time for each activity
-
-The app keeps track of time spent on each activity, either through a timer or by manual input.
-
-When the user asks for a suggestion, the app filters activities by the selected categories and by whether the available time is enough for that activity. It then compares the logged time against the configured multipliers and recommends the activity with the largest deficit relative to its target share.
-
-After getting a suggestion, the user can choose `recommend something else`, start a timer for it, or log time manually. The user can also log time directly for any activity without using the recommendation flow first.
+Now I can tell the app to give me an activity out of all of these categories. It will then give me an activity.
