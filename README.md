@@ -12,9 +12,9 @@ When a time slot finally opens up for me, there are 2 issues:
 
 ## Solution
 
-It lets you input all your interests/activities. It lets you assign how much you want to do each activities, in relation to each other.  
-The app will tell you what activity to do right now. When you are done, it will add the time spent to your activity.  
-Then you can look at a graph, and see your progress.
+It lets you input all your interests/activities. It lets you assign how much you want to do each activity in relation to the others.  
+The app will tell you what activity to do right now. When you are done, it will add the time spent to that activity.  
+Then you can look at a graph and see your progress.
 
 ## Example
 
@@ -34,14 +34,14 @@ So I input the following activities into the app:
 - `jogging = 1.0`
 - `gym = 1.5`
 
-I can also assign `minimal_time`s to these activities. Which means: When I go swimming, I need at least 30 minutes to do so. Drive there, change, shower... So I couldn't go swimming in a 20 minute time window. The app needs to know that. So i assign `swimming` a `minimal_time` of `20 minutes`.
+I can also assign `minimal_time`s to these activities. Which means: when I go swimming, I need at least 30 minutes to do so. Drive there, change, shower... So I could not go swimming in a 20-minute time window. The app needs to know that. So I assign `swimming` a `minimal_time` of `20 minutes`.
 
 ### Usage
 
-When I now start the app, and tell it the size of my time-frame, it will recommend me whatever activity I currently have to do, in order for my activities to stay in the relation that I assigned to them.
+When I now start the app and tell it the size of my time frame, it will recommend whatever activity I currently should do in order for my activities to stay in the relation that I assigned to them.
 
-Now I can start a timer, and after I stop it, the app will automatically add this time to the activity. I can also choose to input the time manually, or, when I don't want to do this activity right now, to `skip` and be recommended a different activity.
+Now I can start a timer, and after I stop it, the app will automatically add this time to the activity. I can also choose to input the time manually, or, when I do not want to do this activity right now, to `skip` and be recommended a different activity.
 
-Now, I don't know wether I want to do **Sports**, **Self-Care** or **Languages**. Which is why earlier, I assigned each of these categories a multiplier aswell. I assigned a **2.0 multiplier to Sports**, a **1.0 Multiplier to Self-Care**, and a **0.3 multiplier to Languages**. This way I do three times as much Self-Care as I learn languages, and twice as much sports as I do self-care.
+Now, I do not know whether I want to do **Sports**, **Self-Care**, or **Languages**. Which is why earlier, I assigned each of these categories a multiplier as well. I assigned a **2.0 multiplier to Sports**, a **1.0 multiplier to Self-Care**, and a **0.3 multiplier to Languages**. This way I do three times as much self-care as I learn languages, and twice as much sports as I do self-care.
 
 Now I can tell the app to give me an activity out of all of these categories. It will then give me an activity.
