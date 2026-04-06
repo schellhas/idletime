@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: idletime-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: idletime
+      POSTGRES_USER: idletime
+      POSTGRES_PASSWORD: idletime
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U idletime -d idletime"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
