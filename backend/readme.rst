@@ -9,7 +9,7 @@ A basic React frontend now also exists in ``../frontend/app`` and talks to these
 Current status
 --------------
 
-As of 2026-04-06, the backend is now the first usable product slice: auth is in place, user-owned domain CRUD is live, and a first recommendation flow works end-to-end.
+As of 2026-04-08, the backend supports the current MVP end-to-end: auth is in place, user-owned domain CRUD is live, nested categories work, and the recommendation flow is connected to the React frontend.
 
 What already exists:
 
@@ -17,11 +17,14 @@ What already exists:
 * PostgreSQL configuration via environment variables
 * a Docker Compose setup for local Postgres
 * an initial SQL schema in ``migrations/001_init.sql``
+* automatic migration application on backend startup
 * multi-user auth tables for ``users``, ``sessions``, and ``email_verification_tokens``
 * session-cookie authentication endpoints
 * authenticated CRUD for categories, activities, and time entries
+* nested categories via ``parent_id`` on ``categories``
 * a v1 ``GET /recommendations`` endpoint that returns the single most-behind activity
-* automatic creation/protection of the default ``root`` category for each user
+* category filtering and repeated skip support for recommendation requests
+* automatic creation/protection of the default internal ``root`` category for each user
 * a development log mailer for verification links
 * an auth design and continuation doc in ``authentication_plan.rst``
 
@@ -87,7 +90,9 @@ The core auth and domain flow has now been runtime-verified locally:
 * register -> verify-email -> login -> ``/auth/me`` succeeded end-to-end
 * authenticated category, activity, and time-entry routes were verified for user isolation behavior
 * ``GET /recommendations`` returned a best-activity result from live tracked data
-* the default ``root`` category is auto-created and protected from deletion
+* repeated skip and category-filtered recommendation requests were verified
+* the default ``root`` category is auto-created, protected from deletion, and used as the top-level Library folder
+* backend startup successfully auto-applied the current migration to fix a live schema mismatch during development
 
 This verification was done in a user-space local environment. On a normal development machine, the standard ``go`` + ``docker compose`` workflow below is still the expected way to run the backend.
 
@@ -114,8 +119,8 @@ Next recommended work
 
 The next AI or developer should pick up from here by focusing on the following:
 
-* expand automated tests for register/login/verify/logout, session expiry, user isolation, and recommendation edge cases
+* expand automated tests for register/login/verify/logout, session expiry, nested-category behavior, and recommendation edge cases
 * refine recommendation logic to consider available time windows and ``minimum_minutes`` more directly
-* polish the React frontend flows and timer-oriented UX in ``../frontend/app``
+* continue polishing the React frontend flows and library-management UX in ``../frontend/app``
 * integrate a real email provider later if needed
 * keep refining API structure as the protected route surface grows

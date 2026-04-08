@@ -16,7 +16,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const defaultRootCategoryName = "root"
+const (
+	defaultRootCategoryName       = "root"
+	legacyDefaultRootCategoryName = "none"
+)
 
 type CategoryHandler struct {
 	cfg         config.Config
@@ -26,6 +29,7 @@ type CategoryHandler struct {
 
 type Category struct {
 	ID         int64     `json:"id"`
+	ParentID   *int64    `json:"parent_id"`
 	Name       string    `json:"name"`
 	Multiplier float64   `json:"multiplier"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -85,7 +89,7 @@ func (h *CategoryHandler) handleListCategories(w http.ResponseWriter, r *http.Re
 
 	rows, err := h.db.Query(
 		r.Context(),
-		`SELECT id, name, multiplier::double precision, created_at
+		`SELECT id, parent_id, name, multiplier::double precision, created_at
 		 FROM categories
 		 WHERE user_id = $1
 		 ORDER BY created_at ASC, id ASC`,
@@ -100,7 +104,7 @@ func (h *CategoryHandler) handleListCategories(w http.ResponseWriter, r *http.Re
 	categories := make([]Category, 0)
 	for rows.Next() {
 		var category Category
-		if err := rows.Scan(&category.ID, &category.Name, &category.Multiplier, &category.CreatedAt); err != nil {
+		if err := rows.Scan(&category.ID, &category.ParentID, &category.Name, &category.Multiplier, &category.CreatedAt); err != nil {
 			writeErrorJSON(w, http.StatusInternalServerError, "failed to read categories")
 			return
 		}
@@ -144,6 +148,7 @@ func (h *CategoryHandler) handleCreateCategory(w http.ResponseWriter, r *http.Re
 	}
 
 	var request struct {
+		ParentID   *int64   `json:"parent_id"`
 		Name       string   `json:"name"`
 		Multiplier *float64 `json:"multiplier"`
 	}
@@ -156,21 +161,29 @@ func (h *CategoryHandler) handleCreateCategory(w http.ResponseWriter, r *http.Re
 	if request.Multiplier != nil {
 		multiplier = *request.Multiplier
 	}
-	if err := validateCategoryInput(strings.TrimSpace(request.Name), multiplier, true); err != nil {
+	trimmedName := strings.TrimSpace(request.Name)
+	if err := validateCategoryInput(trimmedName, multiplier, true); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	parentID, statusCode, err := h.normalizeParentCategoryID(r, user.ID, 0, trimmedName, request.ParentID)
+	if err != nil {
+		writeErrorJSON(w, statusCode, err.Error())
+		return
+	}
+
 	var category Category
-	err := h.db.QueryRow(
+	err = h.db.QueryRow(
 		r.Context(),
-		`INSERT INTO categories (user_id, name, multiplier)
-		 VALUES ($1, $2, $3)
-		 RETURNING id, name, multiplier::double precision, created_at`,
+		`INSERT INTO categories (user_id, parent_id, name, multiplier)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id, parent_id, name, multiplier::double precision, created_at`,
 		user.ID,
-		strings.TrimSpace(request.Name),
+		parentID,
+		trimmedName,
 		multiplier,
-	).Scan(&category.ID, &category.Name, &category.Multiplier, &category.CreatedAt)
+	).Scan(&category.ID, &category.ParentID, &category.Name, &category.Multiplier, &category.CreatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeErrorJSON(w, http.StatusConflict, "category name already exists")
@@ -202,6 +215,7 @@ func (h *CategoryHandler) handleUpdateCategory(w http.ResponseWriter, r *http.Re
 	}
 
 	var request struct {
+		ParentID   *int64   `json:"parent_id"`
 		Name       *string  `json:"name"`
 		Multiplier *float64 `json:"multiplier"`
 	}
@@ -209,21 +223,29 @@ func (h *CategoryHandler) handleUpdateCategory(w http.ResponseWriter, r *http.Re
 		writeErrorJSON(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if request.Name == nil && request.Multiplier == nil {
+	if request.Name == nil && request.Multiplier == nil && request.ParentID == nil {
 		writeErrorJSON(w, http.StatusBadRequest, "at least one category field must be provided")
 		return
 	}
 
 	if request.Name != nil {
 		nextName := strings.TrimSpace(*request.Name)
-		if current.Name == defaultRootCategoryName && nextName != defaultRootCategoryName {
-			writeErrorJSON(w, http.StatusBadRequest, "root category name cannot be changed")
+		if isDefaultCategoryName(current.Name) && !isDefaultCategoryName(nextName) {
+			writeErrorJSON(w, http.StatusBadRequest, "default category name cannot be changed")
 			return
 		}
 		current.Name = nextName
 	}
 	if request.Multiplier != nil {
 		current.Multiplier = *request.Multiplier
+	}
+	if request.ParentID != nil {
+		parentID, statusCode, err := h.normalizeParentCategoryID(r, user.ID, current.ID, current.Name, request.ParentID)
+		if err != nil {
+			writeErrorJSON(w, statusCode, err.Error())
+			return
+		}
+		current.ParentID = parentID
 	}
 
 	if err := validateCategoryInput(current.Name, current.Multiplier, true); err != nil {
@@ -234,14 +256,17 @@ func (h *CategoryHandler) handleUpdateCategory(w http.ResponseWriter, r *http.Re
 	err = h.db.QueryRow(
 		r.Context(),
 		`UPDATE categories
-		 SET name = $3, multiplier = $4
+		 SET parent_id = $3,
+		     name = $4,
+		     multiplier = $5
 		 WHERE id = $1 AND user_id = $2
-		 RETURNING id, name, multiplier::double precision, created_at`,
+		 RETURNING id, parent_id, name, multiplier::double precision, created_at`,
 		categoryID,
 		user.ID,
+		current.ParentID,
 		current.Name,
 		current.Multiplier,
-	).Scan(&current.ID, &current.Name, &current.Multiplier, &current.CreatedAt)
+	).Scan(&current.ID, &current.ParentID, &current.Name, &current.Multiplier, &current.CreatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeErrorJSON(w, http.StatusConflict, "category name already exists")
@@ -275,8 +300,8 @@ func (h *CategoryHandler) handleDeleteCategory(w http.ResponseWriter, r *http.Re
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to load category")
 		return
 	}
-	if category.Name == defaultRootCategoryName {
-		writeErrorJSON(w, http.StatusBadRequest, "root category cannot be deleted")
+	if isDefaultCategoryName(category.Name) {
+		writeErrorJSON(w, http.StatusBadRequest, "default category cannot be deleted")
 		return
 	}
 
@@ -301,11 +326,45 @@ func (h *CategoryHandler) handleDeleteCategory(w http.ResponseWriter, r *http.Re
 }
 
 func (h *CategoryHandler) ensureDefaultRootCategory(r *http.Request, userID int64) error {
+	if _, err := h.db.Exec(
+		r.Context(),
+		`UPDATE categories
+		 SET name = $2,
+		     parent_id = NULL
+		 WHERE user_id = $1
+		   AND LOWER(name) = LOWER($3)
+		   AND NOT EXISTS (
+		     SELECT 1 FROM categories existing
+		     WHERE existing.user_id = $1 AND LOWER(existing.name) = LOWER($2)
+		   )`,
+		userID,
+		defaultRootCategoryName,
+		legacyDefaultRootCategoryName,
+	); err != nil {
+		return err
+	}
+
+	if _, err := h.db.Exec(
+		r.Context(),
+		`INSERT INTO categories (user_id, parent_id, name, multiplier)
+		 VALUES ($1, NULL, $2, 1.0)
+		 ON CONFLICT (user_id, name) DO NOTHING`,
+		userID,
+		defaultRootCategoryName,
+	); err != nil {
+		return err
+	}
+
 	_, err := h.db.Exec(
 		r.Context(),
-		`INSERT INTO categories (user_id, name, multiplier)
-		 VALUES ($1, $2, 1.0)
-		 ON CONFLICT (user_id, name) DO NOTHING`,
+		`UPDATE categories AS child
+		 SET parent_id = root.id
+		 FROM categories AS root
+		 WHERE child.user_id = $1
+		   AND root.user_id = $1
+		   AND LOWER(root.name) = LOWER($2)
+		   AND child.id <> root.id
+		   AND child.parent_id IS NULL`,
 		userID,
 		defaultRootCategoryName,
 	)
@@ -316,13 +375,103 @@ func (h *CategoryHandler) findCategory(r *http.Request, userID, categoryID int64
 	var category Category
 	err := h.db.QueryRow(
 		r.Context(),
-		`SELECT id, name, multiplier::double precision, created_at
+		`SELECT id, parent_id, name, multiplier::double precision, created_at
 		 FROM categories
 		 WHERE id = $1 AND user_id = $2`,
 		categoryID,
 		userID,
-	).Scan(&category.ID, &category.Name, &category.Multiplier, &category.CreatedAt)
+	).Scan(&category.ID, &category.ParentID, &category.Name, &category.Multiplier, &category.CreatedAt)
 	return category, err
+}
+
+func (h *CategoryHandler) findDefaultRootCategory(r *http.Request, userID int64) (Category, error) {
+	var category Category
+	err := h.db.QueryRow(
+		r.Context(),
+		`SELECT id, parent_id, name, multiplier::double precision, created_at
+		 FROM categories
+		 WHERE user_id = $1
+		   AND (LOWER(name) = LOWER($2) OR LOWER(name) = LOWER($3))
+		 ORDER BY CASE WHEN LOWER(name) = LOWER($2) THEN 0 ELSE 1 END, id ASC
+		 LIMIT 1`,
+		userID,
+		defaultRootCategoryName,
+		legacyDefaultRootCategoryName,
+	).Scan(&category.ID, &category.ParentID, &category.Name, &category.Multiplier, &category.CreatedAt)
+	return category, err
+}
+
+func (h *CategoryHandler) normalizeParentCategoryID(r *http.Request, userID, categoryID int64, categoryName string, requestedParentID *int64) (*int64, int, error) {
+	if requestedParentID == nil || *requestedParentID <= 0 {
+		if isDefaultCategoryName(categoryName) {
+			return nil, http.StatusOK, nil
+		}
+		if err := h.ensureDefaultRootCategory(r, userID); err != nil {
+			return nil, http.StatusInternalServerError, fmt.Errorf("failed to prepare root category")
+		}
+		rootCategory, err := h.findDefaultRootCategory(r, userID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, http.StatusNotFound, fmt.Errorf("root category not found")
+		} else if err != nil {
+			return nil, http.StatusInternalServerError, fmt.Errorf("failed to load root category")
+		}
+		normalizedParentID := rootCategory.ID
+		return &normalizedParentID, http.StatusOK, nil
+	}
+	if categoryID > 0 && *requestedParentID == categoryID {
+		return nil, http.StatusBadRequest, fmt.Errorf("category cannot be its own parent")
+	}
+	if isDefaultCategoryName(categoryName) {
+		return nil, http.StatusBadRequest, fmt.Errorf("default category must stay at the top level")
+	}
+	if _, err := h.findCategory(r, userID, *requestedParentID); errors.Is(err, pgx.ErrNoRows) {
+		return nil, http.StatusNotFound, fmt.Errorf("parent category not found")
+	} else if err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("failed to load parent category")
+	}
+	if categoryID > 0 {
+		createsCycle, err := h.categoryCreatesCycle(r, userID, categoryID, *requestedParentID)
+		if err != nil {
+			return nil, http.StatusInternalServerError, fmt.Errorf("failed to validate parent category")
+		}
+		if createsCycle {
+			return nil, http.StatusBadRequest, fmt.Errorf("category nesting cannot create a loop")
+		}
+	}
+
+	normalizedParentID := *requestedParentID
+	return &normalizedParentID, http.StatusOK, nil
+}
+
+func (h *CategoryHandler) categoryCreatesCycle(r *http.Request, userID, categoryID, requestedParentID int64) (bool, error) {
+	var createsCycle bool
+	err := h.db.QueryRow(
+		r.Context(),
+		`WITH RECURSIVE descendants AS (
+		     SELECT id, parent_id
+		     FROM categories
+		     WHERE id = $1 AND user_id = $2
+		   UNION ALL
+		     SELECT c.id, c.parent_id
+		     FROM categories c
+		     JOIN descendants d ON c.parent_id = d.id
+		     WHERE c.user_id = $2
+		 )
+		 SELECT EXISTS (
+		     SELECT 1
+		     FROM descendants
+		     WHERE id = $3
+		 )`,
+		categoryID,
+		userID,
+		requestedParentID,
+	).Scan(&createsCycle)
+	return createsCycle, err
+}
+
+func isDefaultCategoryName(name string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	return normalized == defaultRootCategoryName || normalized == legacyDefaultRootCategoryName
 }
 
 func categoryIDFromPath(path string) (int64, error) {

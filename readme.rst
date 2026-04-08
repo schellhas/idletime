@@ -56,17 +56,20 @@ Now I can tell the app to give me an activity out of all of these categories. It
 Current project status
 ~~~~~~~~~~~~~~~~~~~~~~
 
-As of 2026-04-06, the first working prototype already includes:
+As of 2026-04-08, the app is a working MVP and already includes:
 
-* a React frontend in ``frontend/app`` and a Go backend in ``backend``
+* a React/Vite frontend in ``frontend/app`` and a Go backend in ``backend`` backed by PostgreSQL
 * user accounts with email verification and session-cookie authentication
 * user-scoped CRUD for categories, activities, and time entries
-* a first recommendation flow that returns the single best activity based on how far behind it is relative to the configured multipliers
-* stateless ``skip`` support for asking for the next best recommendation
-* a default ``root`` category so users do not have to organize everything into custom categories
+* a mobile-first UI with three main tabs: ``Activity``, ``Progress``, and ``Library``
+* a real root category with the internal name ``root`` that is shown to users as ``Library``
+* nested categories (categories inside categories) rendered as an expandable tree in the Library view
+* on-demand activity recommendations with optional category filtering, multi-skip support, and a built-in timer that can save tracked time
+* a progress view with totals and simple charts so users can see where their time is going
+* backend startup that automatically applies the current SQL migration so the local app stays runnable after schema changes
 
 Still planned for later:
 
 * use available time windows and ``minimum_minutes`` more directly in the recommendation logic
-* add timer and graph/analytics views
-* continue polishing the frontend UX
+* continue polishing editing and library-management UX
+* add richer analytics, backup/export, and other quality-of-life improvements over time

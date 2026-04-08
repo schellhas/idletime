@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080';
+const DEFAULT_CATEGORY_NAMES = new Set(['none', 'root']);
 
 async function apiFetch(path, options = {}) {
   const { body, headers, ...rest } = options;
@@ -51,7 +52,81 @@ function formatTimestamp(value) {
   return date.toLocaleString();
 }
 
+function formatMinutes(value) {
+  return `${Number(value ?? 0)} min`;
+}
+
+function currentValue(value) {
+  return value ?? '';
+}
+
+function displayCategoryName(name) {
+  const normalized = String(name ?? '').trim().toLowerCase();
+  if (normalized === 'root' || normalized === 'none') {
+    return 'Library';
+  }
+  return String(name ?? 'Library');
+}
+
+function displayCategoryPath(category, categoryById) {
+  if (!category) {
+    return 'Library';
+  }
+
+  const parts = [];
+  const seen = new Set();
+  let current = category;
+
+  while (current && !seen.has(current.id)) {
+    parts.unshift(displayCategoryName(current.name));
+    seen.add(current.id);
+    current = current.parent_id ? categoryById[current.parent_id] : null;
+  }
+
+  return parts.join(' / ');
+}
+
+function isDefaultCategory(category) {
+  return DEFAULT_CATEGORY_NAMES.has(String(category?.name ?? '').trim().toLowerCase());
+}
+
+function clampPercent(value, maxValue) {
+  const safeValue = Math.max(0, Number(value ?? 0));
+  if (safeValue === 0) {
+    return 0;
+  }
+
+  const safeMax = Math.max(1, Number(maxValue ?? 0));
+  return Math.min(100, Math.max(8, Math.round((safeValue / safeMax) * 100)));
+}
+
+function sameIdList(left, right) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((value, index) => value === right[index]);
+}
+
+function formatTimerDuration(startedAt, now) {
+  if (!startedAt) {
+    return '00:00';
+  }
+
+  const totalSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${minutes}:${seconds}`;
+}
+
 export default function App() {
+  const [theme, setTheme] = useState(() => {
+    const saved = window.localStorage.getItem('idletime_theme');
+    if (saved === 'dark' || saved === 'light') {
+      return saved;
+    }
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
   const [bootstrapping, setBootstrapping] = useState(true);
   const [user, setUser] = useState(null);
   const [categories, setCategories] = useState([]);
@@ -64,6 +139,16 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState('');
   const [verificationLink, setVerificationLink] = useState('');
   const [verificationHandled, setVerificationHandled] = useState(false);
+  const [activeView, setActiveView] = useState('use');
+  const [selectedRecommendationCategoryIds, setSelectedRecommendationCategoryIds] = useState([]);
+  const [accountPanelOpen, setAccountPanelOpen] = useState(false);
+  const [categoryEditDrafts, setCategoryEditDrafts] = useState({});
+  const [activityEditDrafts, setActivityEditDrafts] = useState({});
+  const [timerState, setTimerState] = useState({ activityId: null, startedAt: null });
+  const [timerNow, setTimerNow] = useState(Date.now());
+  const [hasRequestedRecommendation, setHasRequestedRecommendation] = useState(false);
+  const [skippedRecommendationActivityIds, setSkippedRecommendationActivityIds] = useState([]);
+  const [expandedLibraryCategories, setExpandedLibraryCategories] = useState({});
 
   const [loginForm, setLoginForm] = useState({
     identifier: '',
@@ -98,6 +183,108 @@ export default function App() {
     () => Object.fromEntries(activities.map((activity) => [activity.id, activity])),
     [activities],
   );
+  const rootCategory = useMemo(
+    () => categories.find((category) => String(category.name ?? '').trim().toLowerCase() === 'root')
+      ?? categories.find((category) => isDefaultCategory(category))
+      ?? null,
+    [categories],
+  );
+  const activitiesByCategoryId = useMemo(() => {
+    const grouped = {};
+    activities.forEach((activity) => {
+      const key = String(activity.category_id);
+      if (!grouped[key]) {
+        grouped[key] = [];
+      }
+      grouped[key].push(activity);
+    });
+    return grouped;
+  }, [activities]);
+  const categoriesByParent = useMemo(() => {
+    const grouped = { root: [] };
+    categories.forEach((category) => {
+      if (rootCategory && category.id === rootCategory.id) {
+        return;
+      }
+
+      const parentKey = category.parent_id && categoryById[category.parent_id]
+        ? String(category.parent_id)
+        : (rootCategory ? String(rootCategory.id) : 'root');
+      if (!grouped[parentKey]) {
+        grouped[parentKey] = [];
+      }
+      grouped[parentKey].push(category);
+    });
+    return grouped;
+  }, [categories, categoryById, rootCategory]);
+  const overallTrackedMinutes = useMemo(
+    () => activities.reduce((sum, activity) => sum + Number(activity.tracked_minutes ?? 0), 0),
+    [activities],
+  );
+  const categoryProgress = useMemo(() => {
+    const maxCategoryMinutes = Math.max(
+      1,
+      ...categories.map((category) => (
+        activities
+          .filter((activity) => activity.category_id === category.id)
+          .reduce((sum, activity) => sum + Number(activity.tracked_minutes ?? 0), 0)
+      )),
+    );
+
+    return categories
+      .map((category) => {
+        const categoryActivities = activities
+          .filter((activity) => activity.category_id === category.id)
+          .sort((left, right) => Number(right.tracked_minutes ?? 0) - Number(left.tracked_minutes ?? 0));
+
+        const totalTrackedMinutes = categoryActivities.reduce(
+          (sum, activity) => sum + Number(activity.tracked_minutes ?? 0),
+          0,
+        );
+        const maxActivityMinutes = Math.max(
+          1,
+          ...categoryActivities.map((activity) => Number(activity.tracked_minutes ?? 0)),
+        );
+        const totalWeight = Number(category.multiplier ?? 1)
+          * (categoryActivities.reduce((sum, activity) => sum + Number(activity.multiplier ?? 1), 0) || 1);
+
+        return {
+          ...category,
+          totalTrackedMinutes,
+          totalWeight,
+          normalizedProgress: totalWeight > 0 ? totalTrackedMinutes / totalWeight : totalTrackedMinutes,
+          shareOfAll: overallTrackedMinutes > 0
+            ? Math.round((totalTrackedMinutes / overallTrackedMinutes) * 100)
+            : 0,
+          totalPercent: clampPercent(totalTrackedMinutes, maxCategoryMinutes),
+          activities: categoryActivities.map((activity) => ({
+            ...activity,
+            trackedDisplayMinutes: Number(activity.tracked_minutes ?? 0),
+            percent: clampPercent(activity.tracked_minutes, maxActivityMinutes),
+          })),
+        };
+      })
+      .sort(
+        (left, right) => right.totalTrackedMinutes - left.totalTrackedMinutes || left.name.localeCompare(right.name),
+      );
+  }, [activities, categories, overallTrackedMinutes]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem('idletime_theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    if (!timerState.startedAt) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setTimerNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [timerState.startedAt]);
 
   useEffect(() => {
     void bootstrapSession();
@@ -162,7 +349,7 @@ export default function App() {
       const response = await apiFetch('/auth/me');
       setUser(response.user);
       await loadOwnedData();
-      setStatusMessage(`Welcome back, ${response.user.username}.`);
+      setStatusMessage('');
     } catch {
       clearOwnedData();
       setUser(null);
@@ -172,25 +359,48 @@ export default function App() {
   }
 
   async function loadOwnedData(options = {}) {
-    const recommendationParams = new URLSearchParams();
-    if (options.excludeActivityId) {
-      recommendationParams.set('exclude_activity_id', String(options.excludeActivityId));
+    const requestedCategoryIds = (options.categoryIds ?? selectedRecommendationCategoryIds).map((value) => String(value));
+    const shouldLoadRecommendation = options.includeRecommendation ?? hasRequestedRecommendation;
+
+    const [categoryResponse, activityResponse, timeEntryResponse] = await Promise.all([
+      apiFetch('/categories'),
+      apiFetch('/activities'),
+      apiFetch('/time-entries'),
+    ]);
+
+    const nextCategories = categoryResponse.categories ?? [];
+    const validCategoryIdSet = new Set(nextCategories.map((category) => String(category.id)));
+    const filteredCategoryIds = requestedCategoryIds.filter((value) => validCategoryIdSet.has(value));
+
+    if (!sameIdList(filteredCategoryIds, selectedRecommendationCategoryIds)) {
+      setSelectedRecommendationCategoryIds(filteredCategoryIds);
     }
+
+    setCategories(nextCategories);
+    setActivities(activityResponse.activities ?? []);
+    setTimeEntries(timeEntryResponse.time_entries ?? []);
+
+    if (!shouldLoadRecommendation) {
+      setRecommendation(null);
+      setRecommendationMessage('');
+      return null;
+    }
+
+    const excludedActivityIds = (options.excludeActivityIds ?? skippedRecommendationActivityIds).map(String);
+    const recommendationParams = new URLSearchParams();
+    excludedActivityIds.forEach((activityId) => {
+      recommendationParams.append('exclude_activity_id', activityId);
+    });
+    filteredCategoryIds.forEach((categoryId) => {
+      recommendationParams.append('category_id', categoryId);
+    });
+
     const recommendationQuery = recommendationParams.toString();
     const recommendationPath = recommendationQuery
       ? `/recommendations?${recommendationQuery}`
       : '/recommendations';
+    const recommendationResponse = await apiFetch(recommendationPath);
 
-    const [categoryResponse, activityResponse, timeEntryResponse, recommendationResponse] = await Promise.all([
-      apiFetch('/categories'),
-      apiFetch('/activities'),
-      apiFetch('/time-entries'),
-      apiFetch(recommendationPath),
-    ]);
-
-    setCategories(categoryResponse.categories ?? []);
-    setActivities(activityResponse.activities ?? []);
-    setTimeEntries(timeEntryResponse.time_entries ?? []);
     setRecommendation(recommendationResponse.recommendation ?? null);
     setRecommendationMessage(recommendationResponse.message ?? '');
 
@@ -203,6 +413,8 @@ export default function App() {
     setTimeEntries([]);
     setRecommendation(null);
     setRecommendationMessage('');
+    setHasRequestedRecommendation(false);
+    setSkippedRecommendationActivityIds([]);
   }
 
   async function handleRegister(event) {
@@ -238,9 +450,10 @@ export default function App() {
 
       setUser(response.user);
       await loadOwnedData();
-      setStatusMessage(`Signed in as ${response.user.username}.`);
+      setStatusMessage('');
       setLoginForm({ identifier: '', password: '' });
       setVerificationLink('');
+      setAccountPanelOpen(false);
     } catch (error) {
       setErrorMessage(error.message);
     }
@@ -254,6 +467,7 @@ export default function App() {
       setUser(null);
       clearOwnedData();
       setStatusMessage('Signed out.');
+      setAccountPanelOpen(false);
     } catch (error) {
       setErrorMessage(error.message);
     }
@@ -360,60 +574,190 @@ export default function App() {
     }
 
     setErrorMessage('');
+    const nextExcludedIds = [...skippedRecommendationActivityIds, String(recommendation.activity_id)];
+    setSkippedRecommendationActivityIds(nextExcludedIds);
 
     try {
-      const nextRecommendation = await loadOwnedData({ excludeActivityId: recommendation.activity_id });
-      if (nextRecommendation?.activity_id) {
-        setTimeEntryForm((current) => ({
-          ...current,
-          activityId: String(nextRecommendation.activity_id),
-        }));
-        setStatusMessage(`Skipped ${recommendation.activity_name}. ${nextRecommendation.activity_name} is next.`);
-        return;
-      }
-
-      setStatusMessage(`Skipped ${recommendation.activity_name}. No alternative recommendation is available yet.`);
+      await loadOwnedData({
+        includeRecommendation: true,
+        excludeActivityIds: nextExcludedIds,
+        categoryIds: selectedRecommendationCategoryIds,
+      });
+      setStatusMessage('');
     } catch (error) {
       setErrorMessage(error.message);
     }
   }
 
-  async function editCategory(category) {
-    if (category.name === 'root') {
-      setStatusMessage('The default root category stays available for uncategorized activities.');
+  function handleToggleRecommendationCategory(categoryId) {
+    const id = String(categoryId);
+    const nextCategoryIds = selectedRecommendationCategoryIds.includes(id)
+      ? selectedRecommendationCategoryIds.filter((value) => value !== id)
+      : [...selectedRecommendationCategoryIds, id];
+
+    setSelectedRecommendationCategoryIds(nextCategoryIds);
+    setHasRequestedRecommendation(false);
+    setSkippedRecommendationActivityIds([]);
+    setRecommendation(null);
+    setRecommendationMessage('');
+    setErrorMessage('');
+    setStatusMessage('');
+  }
+
+  async function handleRecommendActivity() {
+    setErrorMessage('');
+    setHasRequestedRecommendation(true);
+    setSkippedRecommendationActivityIds([]);
+
+    try {
+      await loadOwnedData({
+        includeRecommendation: true,
+        excludeActivityIds: [],
+        categoryIds: selectedRecommendationCategoryIds,
+      });
+      setStatusMessage('');
+    } catch (error) {
+      setErrorMessage(error.message);
+    }
+  }
+
+  async function handleRecommendationTimer() {
+    if (!recommendation) {
       return;
     }
 
-    const name = window.prompt('Category name', category.name);
-    if (name === null) {
-      return;
-    }
-
-    const multiplier = window.prompt('Multiplier', String(category.multiplier));
-    if (multiplier === null) {
+    const isRunningCurrentRecommendation = timerState.startedAt && timerState.activityId === recommendation.activity_id;
+    if (!isRunningCurrentRecommendation) {
+      setTimerState({
+        activityId: recommendation.activity_id,
+        startedAt: Date.now(),
+      });
+      setTimerNow(Date.now());
+      setStatusMessage('');
       return;
     }
 
     setErrorMessage('');
 
     try {
-      await apiFetch(`/categories/${category.id}`, {
-        method: 'PATCH',
+      const minutes = Math.max(1, Math.round((Date.now() - timerState.startedAt) / 60000));
+      await apiFetch('/time-entries', {
+        method: 'POST',
         body: JSON.stringify({
-          name,
-          multiplier: Number(multiplier),
+          activity_id: recommendation.activity_id,
+          minutes,
+          note: '',
         }),
       });
+      setTimerState({ activityId: null, startedAt: null });
+      setTimerNow(Date.now());
+      setSkippedRecommendationActivityIds([]);
+      await loadOwnedData({ includeRecommendation: true, categoryIds: selectedRecommendationCategoryIds });
+      setStatusMessage(`${minutes} min saved for ${recommendation.activity_name}.`);
+    } catch (error) {
+      setErrorMessage(error.message);
+    }
+  }
+
+  function toggleLibraryCategory(categoryId) {
+    setExpandedLibraryCategories((current) => ({
+      ...current,
+      [categoryId]: !current[categoryId],
+    }));
+  }
+
+  function expandAllLibraryCategories() {
+    setExpandedLibraryCategories(
+      Object.fromEntries(categories.map((category) => [category.id, true])),
+    );
+  }
+
+  function collapseAllLibraryCategories() {
+    setExpandedLibraryCategories(
+      Object.fromEntries(categories.map((category) => [category.id, false])),
+    );
+  }
+
+  async function createCategoryInLibrary(parentCategory = null) {
+    const targetParent = parentCategory ?? rootCategory;
+    const name = window.prompt(
+      targetParent
+        ? `New category inside “${displayCategoryPath(targetParent, categoryById)}”`
+        : 'New category name',
+    );
+    if (name === null) {
+      return;
+    }
+
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setErrorMessage('Category name is required.');
+      return;
+    }
+
+    setErrorMessage('');
+
+    try {
+      const response = await apiFetch('/categories', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: trimmedName,
+          multiplier: 1,
+          parent_id: targetParent?.id ?? 0,
+        }),
+      });
+
+      const createdCategoryID = response.category?.id;
+      setExpandedLibraryCategories((current) => ({
+        ...current,
+        ...(targetParent ? { [targetParent.id]: true } : {}),
+        ...(createdCategoryID ? { [createdCategoryID]: true } : {}),
+      }));
       await loadOwnedData();
-      setStatusMessage('Category updated.');
+      setStatusMessage(targetParent ? 'Category added.' : 'Category added.');
+    } catch (error) {
+      setErrorMessage(error.message);
+    }
+  }
+
+  async function createActivityInLibrary(category) {
+    const name = window.prompt(`New activity inside “${displayCategoryPath(category, categoryById)}”`);
+    if (name === null) {
+      return;
+    }
+
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setErrorMessage('Activity name is required.');
+      return;
+    }
+
+    setErrorMessage('');
+
+    try {
+      await apiFetch('/activities', {
+        method: 'POST',
+        body: JSON.stringify({
+          category_id: category.id,
+          name: trimmedName,
+          multiplier: 1,
+          minimum_minutes: 0,
+        }),
+      });
+      setExpandedLibraryCategories((current) => ({
+        ...current,
+        [category.id]: true,
+      }));
+      await loadOwnedData();
+      setStatusMessage('Activity added.');
     } catch (error) {
       setErrorMessage(error.message);
     }
   }
 
   async function deleteCategory(category) {
-    if (category.name === 'root') {
-      setStatusMessage('The default root category cannot be deleted.');
+    if (isDefaultCategory(category)) {
+      setStatusMessage('The root “Library” category cannot be deleted.');
       return;
     }
 
@@ -432,39 +776,6 @@ export default function App() {
     }
   }
 
-  async function editActivity(activity) {
-    const name = window.prompt('Activity name', activity.name);
-    if (name === null) {
-      return;
-    }
-
-    const multiplier = window.prompt('Multiplier', String(activity.multiplier));
-    if (multiplier === null) {
-      return;
-    }
-
-    const minimumMinutes = window.prompt('Minimum useful minutes', String(activity.minimum_minutes));
-    if (minimumMinutes === null) {
-      return;
-    }
-
-    setErrorMessage('');
-
-    try {
-      await apiFetch(`/activities/${activity.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          name,
-          multiplier: Number(multiplier),
-          minimum_minutes: Number(minimumMinutes),
-        }),
-      });
-      await loadOwnedData();
-      setStatusMessage('Activity updated.');
-    } catch (error) {
-      setErrorMessage(error.message);
-    }
-  }
 
   async function deleteActivity(activity) {
     if (!window.confirm(`Delete activity “${activity.name}”?`)) {
@@ -526,390 +837,416 @@ export default function App() {
     }
   }
 
+  function renderLibraryCategory(category, depth = 0) {
+    const childCategories = categoriesByParent[String(category.id)] ?? [];
+    const categoryActivities = activitiesByCategoryId[String(category.id)] ?? [];
+    const isExpanded = expandedLibraryCategories[category.id] ?? depth === 0;
+
+    return (
+      <div className="library-node" key={category.id}>
+        <div className="library-row">
+          <button
+            className="library-row-main"
+            onClick={() => toggleLibraryCategory(category.id)}
+            type="button"
+            aria-expanded={isExpanded}
+          >
+            <span className="library-arrow" aria-hidden="true">{isExpanded ? '▾' : '▸'}</span>
+            <span className="library-icon" aria-hidden="true">{isExpanded ? '📂' : '📁'}</span>
+            <span className="library-label">{displayCategoryName(category.name)}</span>
+          </button>
+        </div>
+
+        {isExpanded ? (
+          <div className="library-children" role="group">
+            {childCategories.map((childCategory) => renderLibraryCategory(childCategory, depth + 1))}
+            {categoryActivities.map((activity) => (
+              <div className="library-child" key={activity.id}>
+                <span className="library-arrow placeholder" aria-hidden="true">•</span>
+                <span className="library-icon" aria-hidden="true">📄</span>
+                <span className="library-label">{activity.name}</span>
+              </div>
+            ))}
+
+            <button
+              className="library-ghost-row"
+              onClick={() => void createCategoryInLibrary(category)}
+              type="button"
+            >
+              <span className="library-arrow placeholder" aria-hidden="true">+</span>
+              <span className="library-icon" aria-hidden="true">📁</span>
+              <span className="library-label">New Category</span>
+            </button>
+
+            <button
+              className="library-ghost-row"
+              onClick={() => void createActivityInLibrary(category)}
+              type="button"
+            >
+              <span className="library-arrow placeholder" aria-hidden="true">+</span>
+              <span className="library-icon" aria-hidden="true">📄</span>
+              <span className="library-label">New Activity</span>
+            </button>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderLibraryNodes(parentId = null, depth = 0) {
+    const parentKey = parentId === null ? 'root' : String(parentId);
+    const childCategories = categoriesByParent[parentKey] ?? [];
+    return childCategories.map((category) => renderLibraryCategory(category, depth));
+  }
+
+  const isTimingRecommendation = Boolean(
+    recommendation && timerState.startedAt && timerState.activityId === recommendation.activity_id,
+  );
+
   if (bootstrapping) {
     return (
       <div className="app-shell">
-        <section className="card hero-card">
-          <h1>idletime</h1>
-          <p>Loading your session…</p>
-        </section>
+        <header className="card top-bar">
+          <button
+            className="theme-button"
+            onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+            type="button"
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            <span aria-hidden="true">{theme === 'dark' ? '☼' : '☾'}</span>
+          </button>
+          <h1 className="top-bar-title">idletime</h1>
+          <button className="account-button" type="button" aria-label="Account">
+            <span aria-hidden="true">👤</span>
+          </button>
+        </header>
       </div>
     );
   }
 
   return (
     <div className="app-shell">
-      <header className="hero-card card">
-        <div>
-          <p className="eyebrow">React frontend</p>
-          <h1>idletime</h1>
-          <p>
-            Track the things you want to do, keep your time balanced, and see your progress.
-          </p>
-        </div>
-        <div className="hero-meta">
-          <span className="pill">API: {API_BASE_URL}</span>
-          {user ? <span className="pill success">Signed in</span> : <span className="pill">Signed out</span>}
-        </div>
+      <header className="card top-bar">
+        <button
+          className="theme-button"
+          onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+          type="button"
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          <span aria-hidden="true">{theme === 'dark' ? '☼' : '☾'}</span>
+        </button>
+        <h1 className="top-bar-title">idletime</h1>
+        <button
+          className={accountPanelOpen || !user ? 'account-button active' : 'account-button'}
+          onClick={() => setAccountPanelOpen((open) => !open)}
+          type="button"
+          aria-label="Account"
+        >
+          <span aria-hidden="true">👤</span>
+        </button>
       </header>
 
       {statusMessage ? <div className="alert success">{statusMessage}</div> : null}
       {errorMessage ? <div className="alert error">{errorMessage}</div> : null}
 
-      {!user ? (
-        <section className="auth-layout">
-          <div className="card">
-            <div className="tabs">
-              <button
-                className={authMode === 'login' ? 'tab active' : 'tab'}
-                onClick={() => setAuthMode('login')}
-                type="button"
-              >
-                Log in
-              </button>
-              <button
-                className={authMode === 'register' ? 'tab active' : 'tab'}
-                onClick={() => setAuthMode('register')}
-                type="button"
-              >
-                Register
-              </button>
-            </div>
-
-            {authMode === 'login' ? (
-              <form className="stack" onSubmit={handleLogin}>
-                <label>
-                  Email or username
-                  <input
-                    value={loginForm.identifier}
-                    onChange={(event) => setLoginForm((current) => ({ ...current, identifier: event.target.value }))}
-                    placeholder="you@example.com"
-                    required
-                  />
-                </label>
-                <label>
-                  Password
-                  <input
-                    type="password"
-                    value={loginForm.password}
-                    onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
-                    placeholder="••••••••"
-                    required
-                  />
-                </label>
-                <button className="primary-button" type="submit">Log in</button>
-              </form>
-            ) : (
-              <form className="stack" onSubmit={handleRegister}>
-                <label>
-                  Username
-                  <input
-                    value={registerForm.username}
-                    onChange={(event) => setRegisterForm((current) => ({ ...current, username: event.target.value }))}
-                    placeholder="alice"
-                    required
-                  />
-                </label>
-                <label>
-                  Email
-                  <input
-                    type="email"
-                    value={registerForm.email}
-                    onChange={(event) => setRegisterForm((current) => ({ ...current, email: event.target.value }))}
-                    placeholder="you@example.com"
-                    required
-                  />
-                </label>
-                <label>
-                  Password
-                  <input
-                    type="password"
-                    value={registerForm.password}
-                    onChange={(event) => setRegisterForm((current) => ({ ...current, password: event.target.value }))}
-                    placeholder="At least 8 characters"
-                    required
-                  />
-                </label>
-                <button className="primary-button" type="submit">Create account</button>
-              </form>
-            )}
-          </div>
-
-          <div className="card stack">
-            <h2>How verification works</h2>
-            <ol className="steps">
-              <li>Create your account with email + password.</li>
-              <li>Use the verification link from the response while in development.</li>
-              <li>Come back and log in to access your own data.</li>
-            </ol>
-
-            {verificationLink ? (
-              <div className="dev-note">
-                <strong>Development verification link</strong>
-                <a href={verificationLink}>{verificationLink}</a>
+      {!user || accountPanelOpen ? (
+        <section className="card stack account-panel">
+          {user ? (
+            <>
+              <div className="section-heading">
+                <h2>Account</h2>
               </div>
-            ) : null}
-          </div>
-        </section>
-      ) : (
-        <>
-          <section className="card session-card">
-            <div>
-              <h2>Your session</h2>
-              <p>
+              <p className="muted-text">
                 <strong>{user.username}</strong> · {user.email}
               </p>
-              <p>Email verified: {user.email_verified ? 'yes' : 'no'}</p>
-            </div>
-            <div className="row gap">
-              <button type="button" onClick={handleRefreshData}>
-                Refresh data
-              </button>
-              <button type="button" onClick={handleLogout}>
-                Log out
-              </button>
-            </div>
-          </section>
-
-          <section className="panel-grid">
-            <article className="card stack recommendation-card">
-              <div className="recommendation-header">
-                <div>
-                  <p className="eyebrow">Recommended right now</p>
-                  <h2>{recommendation?.activity_name ?? 'No recommendation yet'}</h2>
-                </div>
-                <span className={recommendation ? 'pill success' : 'pill'}>
-                  {recommendation ? 'Most behind' : 'Waiting for data'}
-                </span>
+              <div className="row gap wrap-row">
+                <button type="button" onClick={handleRefreshData}>
+                  Refresh
+                </button>
+                <button type="button" onClick={handleLogout}>
+                  Log out
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="tabs">
+                <button
+                  className={authMode === 'login' ? 'tab active' : 'tab'}
+                  onClick={() => setAuthMode('login')}
+                  type="button"
+                >
+                  Log in
+                </button>
+                <button
+                  className={authMode === 'register' ? 'tab active' : 'tab'}
+                  onClick={() => setAuthMode('register')}
+                  type="button"
+                >
+                  Register
+                </button>
               </div>
 
-              {recommendation ? (
-                <>
-                  <p>{recommendation.reason}</p>
-                  <div className="recommendation-meta">
-                    <span className="pill">Category: {recommendation.category_name}</span>
-                    <span className="pill">Tracked: {recommendation.tracked_minutes} min</span>
-                    <span className="pill">Minimum: {recommendation.minimum_minutes} min</span>
-                    <span className="pill">Weight: {recommendation.combined_weight.toFixed(2)}</span>
-                  </div>
-                  <p className="muted-text">
-                    Normalized progress: {recommendation.normalized_progress.toFixed(1)}
-                  </p>
-                  <div className="row gap">
-                    <button className="primary-button" type="button" onClick={handleUseRecommendation}>
-                      Use in time entry
-                    </button>
-                    <button type="button" onClick={handleSkipRecommendation}>
-                      Skip
-                    </button>
-                  </div>
-                </>
+              {authMode === 'login' ? (
+                <form className="stack" onSubmit={handleLogin}>
+                  <label>
+                    Email or username
+                    <input
+                      value={loginForm.identifier}
+                      onChange={(event) => setLoginForm((current) => ({ ...current, identifier: event.target.value }))}
+                      placeholder="you@example.com"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Password
+                    <input
+                      type="password"
+                      value={loginForm.password}
+                      onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
+                      placeholder="••••••••"
+                      required
+                    />
+                  </label>
+                  <button className="primary-button" type="submit">Log in</button>
+                </form>
               ) : (
-                <p className="empty">
-                  {recommendationMessage || 'Add a category and at least one activity to get your first recommendation.'}
-                </p>
+                <form className="stack" onSubmit={handleRegister}>
+                  <label>
+                    Username
+                    <input
+                      value={registerForm.username}
+                      onChange={(event) => setRegisterForm((current) => ({ ...current, username: event.target.value }))}
+                      placeholder="alice"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Email
+                    <input
+                      type="email"
+                      value={registerForm.email}
+                      onChange={(event) => setRegisterForm((current) => ({ ...current, email: event.target.value }))}
+                      placeholder="you@example.com"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Password
+                    <input
+                      type="password"
+                      value={registerForm.password}
+                      onChange={(event) => setRegisterForm((current) => ({ ...current, password: event.target.value }))}
+                      placeholder="At least 8 characters"
+                      required
+                    />
+                  </label>
+                  <button className="primary-button" type="submit">Create account</button>
+                </form>
               )}
-            </article>
 
-            <article className="card stack">
-              <h2>Categories</h2>
-              <form className="stack" onSubmit={handleCreateCategory}>
-                <label>
-                  Name
-                  <input
-                    value={categoryForm.name}
-                    onChange={(event) => setCategoryForm((current) => ({ ...current, name: event.target.value }))}
-                    placeholder="Sport"
-                    required
-                  />
-                </label>
-                <label>
-                  Multiplier
-                  <input
-                    type="number"
-                    min="0.1"
-                    step="0.1"
-                    value={categoryForm.multiplier}
-                    onChange={(event) => setCategoryForm((current) => ({ ...current, multiplier: event.target.value }))}
-                    required
-                  />
-                </label>
-                <button className="primary-button" type="submit">Add category</button>
-              </form>
-
-              <ul className="item-list">
-                {categories.length === 0 ? <li className="empty">No categories yet.</li> : null}
-                {categories.map((category) => {
-                  const isRootCategory = category.name === 'root';
-
-                  return (
-                    <li className="item-card" key={category.id}>
-                      <div>
-                        <strong>{category.name}</strong>
-                        <p>Multiplier: {category.multiplier}</p>
-                        {isRootCategory ? (
-                          <p className="muted-text">Default category for activities that do not need a custom category.</p>
-                        ) : null}
-                        <small>Created {formatTimestamp(category.created_at)}</small>
-                      </div>
-                      {isRootCategory ? (
-                        <div className="row gap small-gap">
-                          <span className="pill">Default</span>
-                        </div>
-                      ) : (
-                        <div className="row gap small-gap">
-                          <button type="button" onClick={() => editCategory(category)}>Edit</button>
-                          <button type="button" onClick={() => deleteCategory(category)}>Delete</button>
-                        </div>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </article>
-
-            <article className="card stack">
-              <h2>Activities</h2>
-              <form className="stack" onSubmit={handleCreateActivity}>
-                <label>
-                  Category
-                  <select
-                    value={activityForm.categoryId}
-                    onChange={(event) => setActivityForm((current) => ({ ...current, categoryId: event.target.value }))}
-                    required
-                  >
-                    {categories.length === 0 ? <option value="">Create a category first</option> : null}
-                    {categories.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Name
-                  <input
-                    value={activityForm.name}
-                    onChange={(event) => setActivityForm((current) => ({ ...current, name: event.target.value }))}
-                    placeholder="Swimming"
-                    required
-                  />
-                </label>
-                <div className="row split-row">
-                  <label>
-                    Multiplier
-                    <input
-                      type="number"
-                      min="0.1"
-                      step="0.1"
-                      value={activityForm.multiplier}
-                      onChange={(event) => setActivityForm((current) => ({ ...current, multiplier: event.target.value }))}
-                      required
-                    />
-                  </label>
-                  <label>
-                    Minimum minutes
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={activityForm.minimumMinutes}
-                      onChange={(event) => setActivityForm((current) => ({ ...current, minimumMinutes: event.target.value }))}
-                      required
-                    />
-                  </label>
+              {verificationLink ? (
+                <div className="dev-note">
+                  <strong>Verification link</strong>
+                  <a href={verificationLink}>{verificationLink}</a>
                 </div>
-                <button className="primary-button" type="submit" disabled={categories.length === 0}>Add activity</button>
-              </form>
+              ) : null}
+            </>
+          )}
+        </section>
+      ) : null}
 
-              <ul className="item-list">
-                {activities.length === 0 ? <li className="empty">No activities yet.</li> : null}
-                {activities.map((activity) => (
-                  <li className="item-card" key={activity.id}>
-                    <div>
-                      <strong>{activity.name}</strong>
-                      <p>
-                        {categoryById[activity.category_id]?.name ?? 'Unknown category'} · multiplier {activity.multiplier}
-                      </p>
-                      <p>
-                        Minimum {activity.minimum_minutes} min · tracked {activity.tracked_minutes} min
-                      </p>
+      {user ? (
+        <>
+          <nav className="card view-switcher" aria-label="Main sections">
+            <button
+              className={activeView === 'use' ? 'nav-tab active' : 'nav-tab'}
+              onClick={() => setActiveView('use')}
+              type="button"
+            >
+              Activity
+            </button>
+            <button
+              className={activeView === 'progress' ? 'nav-tab active' : 'nav-tab'}
+              onClick={() => setActiveView('progress')}
+              type="button"
+            >
+              Progress
+            </button>
+            <button
+              className={activeView === 'edit' ? 'nav-tab active' : 'nav-tab'}
+              onClick={() => setActiveView('edit')}
+              type="button"
+            >
+              Library
+            </button>
+          </nav>
+
+          {activeView === 'use' ? (
+            <section className="stack">
+              <article className="card stack">
+                <p className="muted-text center-text">from categories:</p>
+
+                {categories.length === 0 ? (
+                  <p className="empty">Add a category first.</p>
+                ) : (
+                  <div className="filter-list">
+                    {categories.map((category) => {
+                      const isSelected = selectedRecommendationCategoryIds.includes(String(category.id));
+
+                      return (
+                        <button
+                          key={category.id}
+                          className={isSelected ? 'filter-chip active' : 'filter-chip'}
+                          onClick={() => handleToggleRecommendationCategory(category.id)}
+                          type="button"
+                        >
+                          {displayCategoryPath(category, categoryById)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="row gap wrap-row center-row">
+                  <button className="primary-button" type="button" onClick={handleRecommendActivity}>
+                    Recommend activity
+                  </button>
+                </div>
+              </article>
+
+              {hasRequestedRecommendation ? (
+                <article className="card stack recommendation-card centered-card">
+                  <h2 className="center-text">{recommendation?.activity_name ?? 'No activity yet'}</h2>
+
+                  {recommendation ? (
+                    <div className="row gap wrap-row center-row">
+                      <button className="primary-button" type="button" onClick={handleRecommendationTimer}>
+                        {isTimingRecommendation
+                          ? `Stop timer (${formatTimerDuration(timerState.startedAt, timerNow)})`
+                          : 'Start timer'}
+                      </button>
+                      <button type="button" onClick={handleSkipRecommendation}>
+                        Skip
+                      </button>
                     </div>
-                    <div className="row gap small-gap">
-                      <button type="button" onClick={() => editActivity(activity)}>Edit</button>
-                      <button type="button" onClick={() => deleteActivity(activity)}>Delete</button>
+                  ) : (
+                    <p className="empty center-text">
+                      {recommendationMessage || 'No activity yet.'}
+                    </p>
+                  )}
+                </article>
+              ) : null}
+            </section>
+          ) : null}
+
+          {activeView === 'progress' ? (
+            <section className="stack">
+              <article className="card stack">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">Progress</p>
+                    <h2>Where your time is going</h2>
+                  </div>
+                  <span className="pill">{formatMinutes(overallTrackedMinutes)} total</span>
+                </div>
+
+                <div className="stat-grid">
+                  <div className="stat-tile">
+                    <strong>{categoryProgress.length}</strong>
+                    <span>Categories in play</span>
+                  </div>
+                  <div className="stat-tile">
+                    <strong>{activities.length}</strong>
+                    <span>Tracked activities</span>
+                  </div>
+                  <div className="stat-tile">
+                    <strong>{timeEntries.length}</strong>
+                    <span>Saved sessions</span>
+                  </div>
+                  <div className="stat-tile">
+                    <strong>{overallTrackedMinutes}</strong>
+                    <span>Total minutes</span>
+                  </div>
+                </div>
+              </article>
+
+              <div className="progress-grid">
+                {categoryProgress.length === 0 ? (
+                  <article className="card">
+                    <p className="empty">Add a category and an activity to start seeing progress here.</p>
+                  </article>
+                ) : categoryProgress.map((group) => (
+                  <article className="card stack" key={group.id}>
+                    <div className="section-heading">
+                      <div>
+                        <h2>{displayCategoryPath(group, categoryById)}</h2>
+                        <p className="muted-text">
+                          {group.activities.length} activities · multiplier {group.multiplier}
+                        </p>
+                      </div>
+                      {isDefaultCategory(group) ? <span className="pill">Default</span> : null}
                     </div>
-                  </li>
+
+                    <div className="row gap wrap-row">
+                      <span className="pill success">{formatMinutes(group.totalTrackedMinutes)} tracked</span>
+                      <span className="pill">{group.shareOfAll}% of all tracked time</span>
+                      <span className="pill">Balance score {group.normalizedProgress.toFixed(1)}</span>
+                    </div>
+
+                    <div className="mini-chart" aria-hidden="true">
+                      <span style={{ width: `${group.totalPercent}%` }} />
+                    </div>
+
+                    <div className="item-list">
+                      {group.activities.length === 0 ? (
+                        <p className="empty">No activities in this category yet.</p>
+                      ) : group.activities.map((activity) => (
+                        <div className="progress-item" key={activity.id}>
+                          <div className="progress-item-header">
+                            <strong>{activity.name}</strong>
+                            <span>{formatMinutes(activity.trackedDisplayMinutes)}</span>
+                          </div>
+                          <div className="mini-chart small" aria-hidden="true">
+                            <span style={{ width: `${activity.percent}%` }} />
+                          </div>
+                          <p className="muted-text">
+                            Minimum {formatMinutes(activity.minimum_minutes)} · multiplier {activity.multiplier}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
                 ))}
-              </ul>
-            </article>
+              </div>
+            </section>
+          ) : null}
 
-            <article className="card stack">
-              <h2>Time entries</h2>
-              <form className="stack" onSubmit={handleCreateTimeEntry}>
-                <label>
-                  Activity
-                  <select
-                    value={timeEntryForm.activityId}
-                    onChange={(event) => setTimeEntryForm((current) => ({ ...current, activityId: event.target.value }))}
-                    required
-                  >
-                    {activities.length === 0 ? <option value="">Create an activity first</option> : null}
-                    {activities.map((activity) => (
-                      <option key={activity.id} value={activity.id}>
-                        {activity.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Minutes
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={timeEntryForm.minutes}
-                    onChange={(event) => setTimeEntryForm((current) => ({ ...current, minutes: event.target.value }))}
-                    required
-                  />
-                </label>
-                <label>
-                  Note
-                  <textarea
-                    rows="3"
-                    value={timeEntryForm.note}
-                    onChange={(event) => setTimeEntryForm((current) => ({ ...current, note: event.target.value }))}
-                    placeholder="Pool session"
-                  />
-                </label>
-                <button className="primary-button" type="submit" disabled={activities.length === 0}>Add time entry</button>
-              </form>
+          {activeView === 'edit' ? (
+            <section className="stack">
+              <article className="card stack">
+                <div className="section-heading">
+                  <h2>Library</h2>
+                  <div className="row gap small-gap wrap-row">
+                    <button type="button" onClick={expandAllLibraryCategories}>Expand all</button>
+                    <button type="button" onClick={collapseAllLibraryCategories}>Collapse all</button>
+                  </div>
+                </div>
 
-              <ul className="item-list">
-                {timeEntries.length === 0 ? <li className="empty">No time entries yet.</li> : null}
-                {timeEntries.map((entry) => (
-                  <li className="item-card" key={entry.id}>
-                    <div>
-                      <strong>{activityById[entry.activity_id]?.name ?? 'Unknown activity'}</strong>
-                      <p>{entry.minutes} minutes</p>
-                      {entry.note ? <p>{entry.note}</p> : null}
-                      <small>{formatTimestamp(entry.created_at)}</small>
-                    </div>
-                    <div className="row gap small-gap">
-                      <button type="button" onClick={() => editTimeEntry(entry)}>Edit</button>
-                      <button type="button" onClick={() => deleteTimeEntry(entry)}>Delete</button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </article>
-          </section>
+                <div className="library-tree" role="tree" aria-label="Category library">
+                  {rootCategory ? renderLibraryCategory(rootCategory, 0) : (
+                    <button className="library-ghost-row" onClick={() => void createCategoryInLibrary()} type="button">
+                      <span className="library-arrow placeholder" aria-hidden="true">+</span>
+                      <span className="library-icon" aria-hidden="true">📁</span>
+                      <span className="library-label">New Category</span>
+                    </button>
+                  )}
+                </div>
+              </article>
+            </section>
+          ) : null}
         </>
-      )}
+      ) : null}
     </div>
   );
-}
-
-function currentValue(value) {
-  return value ?? '';
 }

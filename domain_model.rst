@@ -20,13 +20,16 @@ User
 
 A user owns all of their own categories, activities, and time entries.
 
-Each newly registered user also gets a default ``root`` category automatically so the app can still be used without defining custom categories first.
+Each newly registered user also gets a default ``root`` category automatically.
+In the UI, that root category is shown as ``Library`` and acts as the top-level container for the user’s hierarchy.
 
 Category
 --------
 
 A category groups activities together.
-The built-in ``root`` category acts as the fallback category for users who do not want to organize their activities further.
+Categories can now also be nested inside other categories.
+The built-in ``root`` category acts as the top-level fallback container for users who do not want to organize everything manually.
+If a user creates an activity without choosing some other custom branch first, it belongs under that root/``Library`` area.
 
 Examples:
 
@@ -70,6 +73,8 @@ Relationship
 ------------
 
 * one **User** owns many **Categories**
+* one **Category** can optionally belong to one parent **Category**
+* one **Category** can contain many child **Categories**
 * one **Category** contains many **Activities**
 * one **Activity** belongs to one **Category**
 * one **Activity** has many **TimeEntries**
@@ -96,6 +101,7 @@ The current plan is a frontend/backend split:
 * data is stored in **PostgreSQL**
 * business logic and recommendation logic live in the backend
 * multi-user accounts and session-cookie auth are implemented
-* each user gets a default ``root`` category so categorization stays optional
+* each user gets a default ``root`` category, shown as ``Library`` in the frontend
+* category hierarchies are stored through parent/child category links
 
 This document can be expanded later with fields, rules, and recommendation logic.

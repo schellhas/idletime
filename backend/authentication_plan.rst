@@ -6,16 +6,17 @@ Status
 
 This document describes the authentication and multi-user design for ``idletime``.
 
-As of 2026-04-06, the backend foundation for this flow has been added:
+As of 2026-04-08, this auth layer is fully active in the MVP:
 
-* auth routes exist
-* the PostgreSQL schema includes users, sessions, and verification tokens
-* session-cookie auth is wired in
+* auth routes exist and are in daily use by the React frontend
+* the PostgreSQL schema includes users, sessions, verification tokens, and the current user-owned domain tables
+* session-cookie auth is wired in and locally verified
 * verification emails currently use a development log mailer
-* the core auth flow has been runtime-verified locally for register, verify-email, login, and ``/auth/me``
-* each user now gets a default ``root`` category, and protected domain CRUD is live on top of the auth layer
+* the core auth flow has been runtime-verified locally for register, verify-email, login, logout, and ``/auth/me``
+* each user gets a default internal ``root`` category (shown as ``Library`` in the frontend), and protected domain CRUD sits on top of that auth layer
+* backend startup now auto-applies migrations so local schema drift does not break login flows after model changes
 
-The system still needs broader automated tests, frontend polish, and additional production-readiness work.
+The system still needs broader automated tests, rate limiting, and additional production-readiness work.
 
 Purpose
 -------
@@ -34,7 +35,7 @@ For the first version, use the following defaults:
 
 * **database:** PostgreSQL
 * **backend:** Go
-* **password hashing:** ``argon2id`` preferred, ``bcrypt`` acceptable if simplicity is needed
+* **password hashing:** ``bcrypt`` is currently implemented; ``argon2id`` would still be a reasonable future upgrade
 * **auth strategy:** server-side sessions with an ``HttpOnly`` cookie
 * **email verification:** one-time verification token with expiration
 * **v1 scope:** local username/password accounts only; no OAuth/social login

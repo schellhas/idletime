@@ -73,6 +73,119 @@ func TestRecommendationsReturnMostBehindActivity(t *testing.T) {
 	}
 }
 
+func TestRecommendationsCanBeFilteredToSelectedCategories(t *testing.T) {
+	env := newCategoryTestEnv(t)
+	defer env.close()
+
+	client := env.registerVerifyLogin(t, "filtered")
+	sportCategoryID := createTestCategory(t, env, client, "Sport", 2.0)
+	languageCategoryID := createTestCategory(t, env, client, "Languages", 1.0)
+	gymID := createTestActivity(t, env, client, sportCategoryID, "Gym", 2.0, 30)
+	spanishID := createTestActivity(t, env, client, languageCategoryID, "Spanish", 1.0, 20)
+
+	addTestTimeEntry(t, env, client, gymID, 15, "quick lift")
+	addTestTimeEntry(t, env, client, spanishID, 120, "long lesson")
+
+	resp, body := env.request(t, client, http.MethodGet, fmt.Sprintf("/recommendations?category_id=%d", languageCategoryID), nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d with body %s", resp.StatusCode, string(body))
+	}
+
+	var payload struct {
+		Recommendation *struct {
+			ActivityID   int64  `json:"activity_id"`
+			ActivityName string `json:"activity_name"`
+			CategoryName string `json:"category_name"`
+		} `json:"recommendation"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode filtered recommendation response: %v", err)
+	}
+	if payload.Recommendation == nil {
+		t.Fatalf("expected a filtered recommendation, got body %s", string(body))
+	}
+	if payload.Recommendation.ActivityID != spanishID {
+		t.Fatalf("expected spanish (%d) when filtering to languages, got %+v", spanishID, payload.Recommendation)
+	}
+	if payload.Recommendation.ActivityName != "Spanish" || payload.Recommendation.CategoryName != "Languages" {
+		t.Fatalf("expected languages-only recommendation, got %+v", payload.Recommendation)
+	}
+}
+
+func TestRecommendationsIncludeDescendantCategoriesWhenFilteringParent(t *testing.T) {
+	env := newCategoryTestEnv(t)
+	defer env.close()
+
+	client := env.registerVerifyLogin(t, "descendants")
+	parentID := createTestCategory(t, env, client, "Learning", 1.0)
+	childID := createTestCategoryWithParent(t, env, client, "Languages", 1.0, parentID)
+	spanishID := createTestActivity(t, env, client, childID, "Spanish", 1.0, 20)
+
+	resp, body := env.request(t, client, http.MethodGet, fmt.Sprintf("/recommendations?category_id=%d", parentID), nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d with body %s", resp.StatusCode, string(body))
+	}
+
+	var payload struct {
+		Recommendation *struct {
+			ActivityID   int64  `json:"activity_id"`
+			ActivityName string `json:"activity_name"`
+			CategoryName string `json:"category_name"`
+		} `json:"recommendation"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode descendant recommendation response: %v", err)
+	}
+	if payload.Recommendation == nil {
+		t.Fatalf("expected descendant activity to be recommended when filtering parent category, got body %s", string(body))
+	}
+	if payload.Recommendation.ActivityID != spanishID || payload.Recommendation.CategoryName != "Languages" {
+		t.Fatalf("expected descendant category activity when filtering parent, got %+v", payload.Recommendation)
+	}
+}
+
+func TestRecommendationsSupportSkippingMultipleActivities(t *testing.T) {
+	env := newCategoryTestEnv(t)
+	defer env.close()
+
+	client := env.registerVerifyLogin(t, "skipmany")
+	categoryID := createTestCategory(t, env, client, "Sport", 2.0)
+	swimmingID := createTestActivity(t, env, client, categoryID, "Swimming", 2.0, 30)
+	joggingID := createTestActivity(t, env, client, categoryID, "Jogging", 1.0, 20)
+	gymID := createTestActivity(t, env, client, categoryID, "Gym", 1.5, 45)
+
+	addTestTimeEntry(t, env, client, swimmingID, 20, "short swim")
+	addTestTimeEntry(t, env, client, joggingID, 60, "steady run")
+	addTestTimeEntry(t, env, client, gymID, 10, "quick lift")
+
+	resp, body := env.request(t, client, http.MethodGet, fmt.Sprintf("/recommendations?exclude_activity_ids=%d,%d", gymID, swimmingID), nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d with body %s", resp.StatusCode, string(body))
+	}
+
+	var payload struct {
+		Recommendation *struct {
+			ActivityID   int64  `json:"activity_id"`
+			ActivityName string `json:"activity_name"`
+		} `json:"recommendation"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode multi-skip recommendation response: %v", err)
+	}
+	if payload.Recommendation == nil {
+		t.Fatalf("expected a recommendation after excluding multiple activities, got body %s", string(body))
+	}
+	if payload.Recommendation.ActivityID != joggingID {
+		t.Fatalf("expected jogging (%d) after excluding top two, got %+v", joggingID, payload.Recommendation)
+	}
+}
+
 func TestRecommendationsSupportStatelessSkip(t *testing.T) {
 	env := newCategoryTestEnv(t)
 	defer env.close()
@@ -178,11 +291,21 @@ func TestRecommendationsReturnNullWhenNoActivitiesExist(t *testing.T) {
 
 func createTestCategory(t *testing.T, env *categoryTestEnv, client *http.Client, name string, multiplier float64) int64 {
 	t.Helper()
+	return createTestCategoryWithParent(t, env, client, name, multiplier, 0)
+}
 
-	resp, body := env.request(t, client, http.MethodPost, "/categories", map[string]any{
+func createTestCategoryWithParent(t *testing.T, env *categoryTestEnv, client *http.Client, name string, multiplier float64, parentID int64) int64 {
+	t.Helper()
+
+	requestBody := map[string]any{
 		"name":       name,
 		"multiplier": multiplier,
-	})
+	}
+	if parentID > 0 {
+		requestBody["parent_id"] = parentID
+	}
+
+	resp, body := env.request(t, client, http.MethodPost, "/categories", requestBody)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {

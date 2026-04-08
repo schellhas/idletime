@@ -59,7 +59,7 @@ func TestNewUsersReceiveDefaultRootCategory(t *testing.T) {
 	}
 }
 
-func TestRootCategoryCannotBeDeleted(t *testing.T) {
+func TestDefaultCategoryCannotBeDeleted(t *testing.T) {
 	env := newCategoryTestEnv(t)
 	defer env.close()
 
@@ -69,6 +69,46 @@ func TestRootCategoryCannotBeDeleted(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d with body %s", resp.StatusCode, string(body))
+	}
+
+	var listed struct {
+		Categories []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"categories"`
+	}
+	if err := json.Unmarshal(body, &listed); err != nil {
+		t.Fatalf("decode categories response: %v", err)
+	}
+
+	var defaultCategoryID int64
+	for _, category := range listed.Categories {
+		if category.Name == "root" {
+			defaultCategoryID = category.ID
+			break
+		}
+	}
+	if defaultCategoryID == 0 {
+		t.Fatalf("expected default category in list, got body %s", string(body))
+	}
+
+	resp, body = env.request(t, client, http.MethodDelete, fmt.Sprintf("/categories/%d", defaultCategoryID), nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 when deleting default category, got %d with body %s", resp.StatusCode, string(body))
+	}
+}
+
+func TestNewCategoriesDefaultToRootParent(t *testing.T) {
+	env := newCategoryTestEnv(t)
+	defer env.close()
+
+	client := env.registerVerifyLogin(t, "rootparent")
+
+	resp, body := env.request(t, client, http.MethodGet, "/categories", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 on list, got %d with body %s", resp.StatusCode, string(body))
 	}
 
 	var listed struct {
@@ -92,10 +132,48 @@ func TestRootCategoryCannotBeDeleted(t *testing.T) {
 		t.Fatalf("expected root category in list, got body %s", string(body))
 	}
 
-	resp, body = env.request(t, client, http.MethodDelete, fmt.Sprintf("/categories/%d", rootID), nil)
+	resp, body = env.request(t, client, http.MethodPost, "/categories", map[string]any{
+		"name":       "Inner",
+		"multiplier": 1.1,
+	})
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected 400 when deleting root category, got %d with body %s", resp.StatusCode, string(body))
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 on category create, got %d with body %s", resp.StatusCode, string(body))
+	}
+	if !bytes.Contains(body, []byte(fmt.Sprintf(`"parent_id":%d`, rootID))) {
+		t.Fatalf("expected new categories to default under root %d, got body %s", rootID, string(body))
+	}
+}
+
+func TestCategoriesCanBeNested(t *testing.T) {
+	env := newCategoryTestEnv(t)
+	defer env.close()
+
+	client := env.registerVerifyLogin(t, "nested")
+	parentID := createTestCategory(t, env, client, "Fitness", 1.5)
+
+	resp, body := env.request(t, client, http.MethodPost, "/categories", map[string]any{
+		"name":       "Cardio",
+		"multiplier": 1.1,
+		"parent_id":  parentID,
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 on nested category create, got %d with body %s", resp.StatusCode, string(body))
+	}
+	if !bytes.Contains(body, []byte(fmt.Sprintf(`"parent_id":%d`, parentID))) {
+		t.Fatalf("expected nested category to keep parent_id %d, got body %s", parentID, string(body))
+	}
+
+	resp, body = env.request(t, client, http.MethodGet, "/categories", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 on list, got %d with body %s", resp.StatusCode, string(body))
+	}
+	if !bytes.Contains(body, []byte(fmt.Sprintf(`"parent_id":%d`, parentID))) {
+		t.Fatalf("expected nested category in list response, got body %s", string(body))
 	}
 }
 

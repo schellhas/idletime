@@ -25,6 +25,10 @@ func main() {
 	}
 	defer dbPool.Close()
 
+	if err := database.ApplyMigrations(context.Background(), dbPool); err != nil {
+		log.Fatalf("apply migrations: %v", err)
+	}
+
 	mailer := mail.NewLogMailer(log.Default())
 	authService := auth.NewService(dbPool, mailer, cfg.FrontendURL, cfg.SessionTTL())
 

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net/http"
@@ -71,13 +72,19 @@ func (h *RecommendationHandler) handleRecommendations(w http.ResponseWriter, r *
 		return
 	}
 
-	excludeActivityID, excludeSet, err := excludeActivityIDFromRequest(r)
+	excludeActivityIDs, excludeSet, err := excludeActivityIDsFromRequest(r)
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	recommendation, message, err := h.buildRecommendation(r, user.ID, excludeActivityID, excludeSet)
+	categoryIDs, categoryFilterSet, err := categoryIDsFromRequest(r)
+	if err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	recommendation, message, err := h.buildRecommendation(r, user.ID, excludeActivityIDs, excludeSet, categoryIDs, categoryFilterSet)
 	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to build recommendation")
 		return
@@ -89,21 +96,117 @@ func (h *RecommendationHandler) handleRecommendations(w http.ResponseWriter, r *
 	})
 }
 
-func excludeActivityIDFromRequest(r *http.Request) (int64, bool, error) {
-	value := strings.TrimSpace(r.URL.Query().Get("exclude_activity_id"))
-	if value == "" {
-		return 0, false, nil
+func excludeActivityIDsFromRequest(r *http.Request) ([]int64, bool, error) {
+	rawValues := append([]string{}, r.URL.Query()["exclude_activity_id"]...)
+	if csv := strings.TrimSpace(r.URL.Query().Get("exclude_activity_ids")); csv != "" {
+		rawValues = append(rawValues, strings.Split(csv, ",")...)
+	}
+	if len(rawValues) == 0 {
+		return nil, false, nil
 	}
 
-	activityID, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || activityID <= 0 {
-		return 0, false, fmt.Errorf("exclude_activity_id must be a positive integer")
+	excludeIDs := make([]int64, 0, len(rawValues))
+	seen := make(map[int64]struct{}, len(rawValues))
+	for _, rawValue := range rawValues {
+		value := strings.TrimSpace(rawValue)
+		if value == "" {
+			continue
+		}
+
+		activityID, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || activityID <= 0 {
+			return nil, false, fmt.Errorf("exclude activity filters must be positive integers")
+		}
+		if _, exists := seen[activityID]; exists {
+			continue
+		}
+		seen[activityID] = struct{}{}
+		excludeIDs = append(excludeIDs, activityID)
 	}
 
-	return activityID, true, nil
+	if len(excludeIDs) == 0 {
+		return nil, false, nil
+	}
+
+	return excludeIDs, true, nil
 }
 
-func (h *RecommendationHandler) buildRecommendation(r *http.Request, userID, excludeActivityID int64, excludeSet bool) (*Recommendation, string, error) {
+func categoryIDsFromRequest(r *http.Request) ([]int64, bool, error) {
+	rawValues := append([]string{}, r.URL.Query()["category_id"]...)
+	if csv := strings.TrimSpace(r.URL.Query().Get("category_ids")); csv != "" {
+		rawValues = append(rawValues, strings.Split(csv, ",")...)
+	}
+	if len(rawValues) == 0 {
+		return nil, false, nil
+	}
+
+	categoryIDs := make([]int64, 0, len(rawValues))
+	seen := make(map[int64]struct{}, len(rawValues))
+	for _, rawValue := range rawValues {
+		value := strings.TrimSpace(rawValue)
+		if value == "" {
+			continue
+		}
+
+		categoryID, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || categoryID <= 0 {
+			return nil, false, fmt.Errorf("category filters must be positive integers")
+		}
+		if _, exists := seen[categoryID]; exists {
+			continue
+		}
+		seen[categoryID] = struct{}{}
+		categoryIDs = append(categoryIDs, categoryID)
+	}
+
+	if len(categoryIDs) == 0 {
+		return nil, false, nil
+	}
+
+	return categoryIDs, true, nil
+}
+
+func (h *RecommendationHandler) expandCategoryIDs(ctx context.Context, userID int64, categoryIDs []int64) ([]int64, error) {
+	rows, err := h.db.Query(
+		ctx,
+		`WITH RECURSIVE selected_categories AS (
+		     SELECT id, parent_id
+		     FROM categories
+		     WHERE user_id = $1
+		       AND id = ANY($2)
+		   UNION ALL
+		     SELECT c.id, c.parent_id
+		     FROM categories c
+		     JOIN selected_categories sc ON c.parent_id = sc.id
+		     WHERE c.user_id = $1
+		 )
+		 SELECT DISTINCT id
+		 FROM selected_categories
+		 ORDER BY id ASC`,
+		userID,
+		categoryIDs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	expandedIDs := make([]int64, 0, len(categoryIDs))
+	for rows.Next() {
+		var categoryID int64
+		if err := rows.Scan(&categoryID); err != nil {
+			return nil, err
+		}
+		expandedIDs = append(expandedIDs, categoryID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return expandedIDs, nil
+}
+
+func (h *RecommendationHandler) buildRecommendation(r *http.Request, userID int64, excludeActivityIDs []int64, excludeSet bool, categoryIDs []int64, categoryFilterSet bool) (*Recommendation, string, error) {
 	query := `SELECT a.id,
 	                a.name,
 	                a.category_id,
@@ -119,8 +222,28 @@ func (h *RecommendationHandler) buildRecommendation(r *http.Request, userID, exc
 	args := []any{userID}
 
 	if excludeSet {
-		query += ` AND a.id <> $2`
-		args = append(args, excludeActivityID)
+		placeholders := make([]string, 0, len(excludeActivityIDs))
+		for _, activityID := range excludeActivityIDs {
+			args = append(args, activityID)
+			placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+		}
+		query += ` AND a.id NOT IN (` + strings.Join(placeholders, ", ") + `)`
+	}
+	if categoryFilterSet {
+		expandedCategoryIDs, err := h.expandCategoryIDs(r.Context(), userID, categoryIDs)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(expandedCategoryIDs) == 0 {
+			return nil, "No activities match the selected categories yet.", nil
+		}
+
+		placeholders := make([]string, 0, len(expandedCategoryIDs))
+		for _, categoryID := range expandedCategoryIDs {
+			args = append(args, categoryID)
+			placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+		}
+		query += ` AND a.category_id IN (` + strings.Join(placeholders, ", ") + `)`
 	}
 
 	query += ` ORDER BY a.created_at ASC, a.id ASC`
@@ -162,8 +285,14 @@ func (h *RecommendationHandler) buildRecommendation(r *http.Request, userID, exc
 	}
 
 	if len(candidates) == 0 {
+		if excludeSet && categoryFilterSet {
+			return nil, "No alternative recommendation is available for the selected categories yet.", nil
+		}
 		if excludeSet {
 			return nil, "No alternative recommendation is available yet. Add more activities to get another option.", nil
+		}
+		if categoryFilterSet {
+			return nil, "No activities match the selected categories yet.", nil
 		}
 		return nil, "Create a category and at least one activity to get a recommendation.", nil
 	}

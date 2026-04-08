@@ -31,7 +31,10 @@ var (
 
 var emailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
-const defaultRootCategoryName = "root"
+const (
+	defaultRootCategoryName       = "root"
+	legacyDefaultRootCategoryName = "none"
+)
 
 type Mailer interface {
 	SendVerificationEmail(ctx context.Context, toEmail, username, verificationURL string) error
@@ -357,13 +360,47 @@ func (s *Service) findUserByIdentifier(ctx context.Context, identifier string) (
 func (s *Service) ensureDefaultRootCategory(ctx context.Context, userID int64) error {
 	if _, err := s.db.Exec(
 		ctx,
-		`INSERT INTO categories (user_id, name, multiplier)
-		 VALUES ($1, $2, 1.0)
+		`UPDATE categories
+		 SET name = $2,
+		     parent_id = NULL
+		 WHERE user_id = $1
+		   AND LOWER(name) = LOWER($3)
+		   AND NOT EXISTS (
+		     SELECT 1 FROM categories existing
+		     WHERE existing.user_id = $1 AND LOWER(existing.name) = LOWER($2)
+		   )`,
+		userID,
+		defaultRootCategoryName,
+		legacyDefaultRootCategoryName,
+	); err != nil {
+		return fmt.Errorf("rename legacy default category: %w", err)
+	}
+
+	if _, err := s.db.Exec(
+		ctx,
+		`INSERT INTO categories (user_id, parent_id, name, multiplier)
+		 VALUES ($1, NULL, $2, 1.0)
 		 ON CONFLICT (user_id, name) DO NOTHING`,
 		userID,
 		defaultRootCategoryName,
 	); err != nil {
-		return fmt.Errorf("create default root category: %w", err)
+		return fmt.Errorf("create default category: %w", err)
+	}
+
+	if _, err := s.db.Exec(
+		ctx,
+		`UPDATE categories AS child
+		 SET parent_id = root.id
+		 FROM categories AS root
+		 WHERE child.user_id = $1
+		   AND root.user_id = $1
+		   AND LOWER(root.name) = LOWER($2)
+		   AND child.id <> root.id
+		   AND child.parent_id IS NULL`,
+		userID,
+		defaultRootCategoryName,
+	); err != nil {
+		return fmt.Errorf("attach categories to root: %w", err)
 	}
 
 	return nil
