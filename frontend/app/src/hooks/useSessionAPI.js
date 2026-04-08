@@ -86,7 +86,7 @@ export function useSessionAPI(
 
   const bootstrapSession = useCallback(async () => {
     try {
-      await apiFetch('/auth/user');
+      await apiFetch('/auth/me');
       await loadOwnedData();
       setStatusMessage('');
     } catch {

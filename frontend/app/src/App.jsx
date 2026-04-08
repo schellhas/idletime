@@ -26,6 +26,7 @@ export default function App() {
   const [dragMultipliers, setDragMultipliers] = useState({});
   const [hasRequestedRecommendation, setHasRequestedRecommendation] = useState(false);
   const [skippedActivityIds, setSkippedActivityIds] = useState([]);
+  const [availableMinutes, setAvailableMinutes] = useState('');
   const [recommendation, setRecommendation] = useState(null);
   const [recommendationMessage, setRecommendationMessage] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
@@ -67,21 +68,48 @@ export default function App() {
       }
     })();
   }, [sessionAPI.verificationHandled]);
+
+  const recommendWithTimeFilter = useCallback(async (excludeActivityIds = []) => {
+    const maxMinutes = Number(availableMinutes);
+    const hasTimeLimit = Number.isFinite(maxMinutes) && maxMinutes > 0;
+    const excluded = [...excludeActivityIds.map(String)];
+    const seen = new Set(excluded);
+    while (true) {
+      const rec = await sessionAPI.loadOwnedData({
+        includeRecommendation: true,
+        excludeActivityIds: excluded,
+        categoryIds: lib.selectedRecommendationCategoryIds,
+      });
+      if (!rec) {
+        return { recommendation: null, excluded };
+      }
+      if (!hasTimeLimit || Number(rec.minimum_minutes ?? 0) <= maxMinutes) {
+        return { recommendation: rec, excluded };
+      }
+      const recId = String(rec.activity_id ?? '');
+      if (!recId || seen.has(recId)) {
+        return { recommendation: null, excluded };
+      }
+      seen.add(recId);
+      excluded.push(recId);
+    }
+  }, [availableMinutes, sessionAPI, lib.selectedRecommendationCategoryIds]);
+
   const handleRecommendActivity = useCallback(async () => {
     setErrorMessage('');
     setHasRequestedRecommendation(true);
-    setSkippedActivityIds([]);
     try {
-      await sessionAPI.loadOwnedData({
-        includeRecommendation: true,
-        excludeActivityIds: [],
-        categoryIds: lib.selectedRecommendationCategoryIds,
-      });
-      setStatusMessage('');
+      const { recommendation: rec, excluded } = await recommendWithTimeFilter([]);
+      setSkippedActivityIds(excluded);
+      if (!rec && Number(availableMinutes) > 0) {
+        setStatusMessage('No activity fits the selected time budget.');
+      } else {
+        setStatusMessage('');
+      }
     } catch (error) {
       setErrorMessage(error.message);
     }
-  }, [lib.selectedRecommendationCategoryIds, sessionAPI]);
+  }, [recommendWithTimeFilter, availableMinutes]);
   const handleRecommendationTimer = useCallback(async () => {
     if (!recommendation) return;
     const isRunning = timer.timerState.startedAt && timer.timerState.activityId === recommendation.activity_id;
@@ -100,29 +128,25 @@ export default function App() {
       });
       timer.setTimerState({ activityId: null, startedAt: null });
       timer.setTimerNow(Date.now());
-      setSkippedActivityIds([]);
-      await sessionAPI.loadOwnedData({ includeRecommendation: true, categoryIds: lib.selectedRecommendationCategoryIds });
+      const { excluded } = await recommendWithTimeFilter([]);
+      setSkippedActivityIds(excluded);
       setStatusMessage(`${mins} min saved.`);
     } catch (error) {
       setErrorMessage(error.message);
     }
-  }, [recommendation, timer, sessionAPI, lib.selectedRecommendationCategoryIds]);
+  }, [recommendation, timer, recommendWithTimeFilter]);
   const handleSkipRecommendation = useCallback(async () => {
     if (!recommendation) return;
     setErrorMessage('');
     const nextIds = [...skippedActivityIds, String(recommendation.activity_id)];
-    setSkippedActivityIds(nextIds);
     try {
-      await sessionAPI.loadOwnedData({
-        includeRecommendation: true,
-        excludeActivityIds: nextIds,
-        categoryIds: lib.selectedRecommendationCategoryIds,
-      });
+      const { excluded } = await recommendWithTimeFilter(nextIds);
+      setSkippedActivityIds(excluded);
       setStatusMessage('');
     } catch (error) {
       setErrorMessage(error.message);
     }
-  }, [recommendation, skippedActivityIds, sessionAPI, lib.selectedRecommendationCategoryIds]);
+  }, [recommendation, skippedActivityIds, recommendWithTimeFilter]);
   const handleToggleRecommendationCategory = useCallback((categoryId) => {
     const id = String(categoryId);
     const descendantIds = [];
@@ -244,7 +268,7 @@ export default function App() {
           method: 'POST',
           body: JSON.stringify({
             name,
-            multiplier: 1,
+            multiplier: Number(lib.libraryCreateDraft.multiplier ?? 1),
             parent_id: lib.libraryCreateTarget.parentCategoryID ?? 0,
           }),
         });
@@ -260,8 +284,8 @@ export default function App() {
           body: JSON.stringify({
             category_id: lib.libraryCreateTarget.categoryID,
             name,
-            multiplier: 1,
-            minimum_minutes: 0,
+            multiplier: Number(lib.libraryCreateDraft.multiplier ?? 1),
+            minimum_minutes: Number(lib.libraryCreateDraft.minimumMinutes ?? 0),
           }),
         });
         lib.setExpandedLibraryCategories((c) => ({
@@ -363,7 +387,7 @@ export default function App() {
             <button className={activeView === 'progress' ? 'nav-tab active' : 'nav-tab'} onClick={() => setActiveView('progress')} type="button">Stats</button>
             <button className={activeView === 'edit' ? 'nav-tab active' : 'nav-tab'} onClick={() => setActiveView('edit')} type="button">Edit</button>
           </nav>
-          {activeView === 'use' && <UseView categories={data.categories} selectedRecommendationCategoryIdSet={derived.selectedRecommendationCategoryIdSet} recommendation={recommendation} hasRequestedRecommendation={hasRequestedRecommendation} isTimingRecommendation={isTimingRecommendation} timerState={timer.timerState} timerNow={timer.timerNow} recommendationCategoryPickerOpen={lib.recommendationCategoryPickerOpen} categoriesByParent={derived.categoriesByParent} expandedRecommendationCategories={lib.expandedRecommendationCategories} onToggleRecommendationCategory={handleToggleRecommendationCategory} onToggleRecommendationCategoryExpansion={lib.toggleRecommendationCategoryExpansion} onExpandAllRecommendationCategories={() => lib.expandAllRecommendationCategories(data.categories)} onCollapseAllRecommendationCategories={() => lib.collapseAllRecommendationCategories(data.categories)} onRecommendActivity={handleRecommendActivity} onRecommendationTimer={handleRecommendationTimer} onSkipRecommendation={handleSkipRecommendation} onSetRecommendationCategoryPickerOpen={lib.setRecommendationCategoryPickerOpen} rootCategory={rootCategory} />}
+          {activeView === 'use' && <UseView categories={data.categories} selectedRecommendationCategoryIdSet={derived.selectedRecommendationCategoryIdSet} recommendation={recommendation} hasRequestedRecommendation={hasRequestedRecommendation} isTimingRecommendation={isTimingRecommendation} timerState={timer.timerState} timerNow={timer.timerNow} availableMinutes={availableMinutes} recommendationCategoryPickerOpen={lib.recommendationCategoryPickerOpen} categoriesByParent={derived.categoriesByParent} expandedRecommendationCategories={lib.expandedRecommendationCategories} onToggleRecommendationCategory={handleToggleRecommendationCategory} onToggleRecommendationCategoryExpansion={lib.toggleRecommendationCategoryExpansion} onExpandAllRecommendationCategories={() => lib.expandAllRecommendationCategories(data.categories)} onCollapseAllRecommendationCategories={() => lib.collapseAllRecommendationCategories(data.categories)} onRecommendActivity={handleRecommendActivity} onRecommendationTimer={handleRecommendationTimer} onSkipRecommendation={handleSkipRecommendation} onSetAvailableMinutes={setAvailableMinutes} onSetRecommendationCategoryPickerOpen={lib.setRecommendationCategoryPickerOpen} rootCategory={rootCategory} />}
           {activeView === 'progress' && <StatsView activityPieChart={activityPieChart} categoryProgress={derived.categoryProgress} categoriesByParent={derived.categoriesByParent} isDefaultCategory={isDefaultCategory} />}
           {activeView === 'edit' && <EditView categories={data.categories} categoryProgress={derived.categoryProgress} categoriesByParent={derived.categoriesByParent} activitiesByCategoryId={derived.activitiesByCategoryId} dragMultipliers={dragMultipliers} expandedLibraryCategories={lib.expandedLibraryCategories} rootCategory={rootCategory} onToggleLibraryCategory={lib.toggleLibraryCategory} onExpandAllLibraryCategories={() => lib.expandAllLibraryCategories(data.categories)} onCollapseAllLibraryCategories={lib.collapseAllLibraryCategories} onOpenLibrarySettings={lib.openLibrarySettings} onCreateCategoryInLibrary={createCategoryInLibrary} onCreateActivityInLibrary={createActivityInLibrary} onSaveMultiplier={saveMultiplier} onSaveCategoryMultiplier={saveCategoryMultiplier} onSetDragMultipliers={setDragMultipliers} />}
         </>

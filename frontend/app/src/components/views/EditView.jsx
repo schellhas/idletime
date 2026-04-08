@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   displayCategoryName,
   isDefaultCategory,
@@ -21,10 +22,23 @@ export function EditView({
   onSaveCategoryMultiplier,
   onSetDragMultipliers,
 }) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const lowerQuery = searchQuery.toLowerCase().trim();
+
+  function nameMatches(name) {
+    return !lowerQuery || name.toLowerCase().includes(lowerQuery);
+  }
+  function nodeMatches(category) {
+    if (nameMatches(displayCategoryName(category.name))) return true;
+    const childCats = categoriesByParent[String(category.id)] ?? [];
+    const childActs = activitiesByCategoryId[String(category.id)] ?? [];
+    return childCats.some(nodeMatches) || childActs.some((a) => nameMatches(a.name));
+  }
+
   function renderLibraryCategory(category, depth = 0) {
-    const childCategories = categoriesByParent[String(category.id)] ?? [];
-    const categoryActivities = activitiesByCategoryId[String(category.id)] ?? [];
-    const isExpanded = expandedLibraryCategories[category.id] ?? depth === 0;
+    const childCategories = (categoriesByParent[String(category.id)] ?? []).filter((c) => !lowerQuery || nodeMatches(c));
+    const categoryActivities = (activitiesByCategoryId[String(category.id)] ?? []).filter((a) => nameMatches(a.name));
+    const isExpanded = (lowerQuery ? true : null) ?? expandedLibraryCategories[category.id] ?? depth === 0;
 
     return (
       <div className="library-node" key={category.id}>
@@ -105,6 +119,16 @@ export function EditView({
 
   return (
     <section className="stack">
+      <article className="card">
+        <input
+          className="edit-search"
+          type="search"
+          placeholder="Search for activities or categories..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          aria-label="Search for activities or categories"
+        />
+      </article>
       <article className="card stack">
         <div className="section-heading">
           <h2>Category tree</h2>
@@ -115,13 +139,17 @@ export function EditView({
         </div>
 
         <div className="library-tree" role="tree" aria-label="Category library">
-          {rootCategory ? renderLibraryCategory(rootCategory, 0) : (
-            <button className="library-ghost-row" onClick={() => void onCreateCategoryInLibrary()} type="button">
-              <span className="library-arrow placeholder" aria-hidden="true">+</span>
-              <span className="library-icon" aria-hidden="true">📁</span>
-              <span className="library-label">New Category</span>
-            </button>
-          )}
+          {rootCategory
+            ? (nodeMatches(rootCategory) ? renderLibraryCategory(rootCategory, 0) : <p className="empty">No matches.</p>)
+            : (categoriesByParent.root ?? []).filter(nodeMatches).length > 0
+              ? (categoriesByParent.root ?? []).filter(nodeMatches).map((c) => renderLibraryCategory(c, 0))
+              : (
+                <button className="library-ghost-row" onClick={() => void onCreateCategoryInLibrary()} type="button">
+                  <span className="library-arrow placeholder" aria-hidden="true">+</span>
+                  <span className="library-icon" aria-hidden="true">📁</span>
+                  <span className="library-label">New Category</span>
+                </button>
+              )}
         </div>
       </article>
 
@@ -148,7 +176,9 @@ export function EditView({
           ];
           const rawMax = Math.max(1, selfMultiplier, ...faderItems.map((item) => item.multiplier));
           const maxScale = Math.max(rawMax, 5);
-          const sorted = [...faderItems].sort(
+          const sorted = [...faderItems]
+            .filter((item) => nameMatches(item.name))
+            .sort(
             (a, b) => b.multiplier - a.multiplier || a.name.localeCompare(b.name),
           );
           const selfPct = Math.min(100, Math.round((selfMultiplier / maxScale) * 100));

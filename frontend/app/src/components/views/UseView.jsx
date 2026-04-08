@@ -11,6 +11,7 @@ export function UseView({
   isTimingRecommendation,
   timerState,
   timerNow,
+  availableMinutes,
   recommendationCategoryPickerOpen,
   categoriesByParent,
   expandedRecommendationCategories,
@@ -21,6 +22,7 @@ export function UseView({
   onRecommendActivity,
   onRecommendationTimer,
   onSkipRecommendation,
+  onSetAvailableMinutes,
   onSetRecommendationCategoryPickerOpen,
   rootCategory,
 }) {
@@ -72,6 +74,24 @@ export function UseView({
   return (
     <section className="stack">
       <article className="card stack">
+        <label className="stack">
+          <span>How much time do you have? (minutes)</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            placeholder="e.g. 20"
+            value={availableMinutes}
+            onChange={(event) => onSetAvailableMinutes(event.target.value)}
+          />
+        </label>
+        <div className="row gap wrap-row center-row">
+          <button className="primary-button" type="button" onClick={onRecommendActivity}>
+            Recommend activity
+          </button>
+        </div>
+      </article>
+      <article className="card stack">
         <div className="section-heading">
           <h2>Choose from categories</h2>
           <span className="pill">
@@ -111,12 +131,6 @@ export function UseView({
             ) : null}
           </div>
         )}
-
-        <div className="row gap wrap-row center-row">
-          <button className="primary-button" type="button" onClick={onRecommendActivity}>
-            Recommend activity
-          </button>
-        </div>
       </article>
 
       {hasRequestedRecommendation ? (

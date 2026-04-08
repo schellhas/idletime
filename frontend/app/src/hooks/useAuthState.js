@@ -51,7 +51,7 @@ export function useAuthState() {
 
   async function bootstrapSession() {
     try {
-      const userData = await apiFetch('/auth/user');
+      const userData = await apiFetch('/auth/me');
       setUser(userData.user ?? null);
     } catch {
       setUser(null);

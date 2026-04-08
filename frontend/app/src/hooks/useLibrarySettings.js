@@ -38,7 +38,11 @@ export function useLibrarySettings() {
   }
 
   function openLibraryCreate(target) {
-    setLibraryCreateDraft({ name: '' });
+    setLibraryCreateDraft(
+      target.type === 'category'
+        ? { name: '', multiplier: '1' }
+        : { name: '', multiplier: '1', minimumMinutes: '0', trackedMinutes: '0' },
+    );
     setLibraryCreateTarget(target);
   }
 
