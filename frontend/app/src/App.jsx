@@ -149,6 +149,8 @@ export default function App() {
   const [hasRequestedRecommendation, setHasRequestedRecommendation] = useState(false);
   const [skippedRecommendationActivityIds, setSkippedRecommendationActivityIds] = useState([]);
   const [expandedLibraryCategories, setExpandedLibraryCategories] = useState({});
+  const [librarySettingsTarget, setLibrarySettingsTarget] = useState(null);
+  const [librarySettingsDraft, setLibrarySettingsDraft] = useState({});
 
   const [loginForm, setLoginForm] = useState({
     identifier: '',
@@ -678,6 +680,88 @@ export default function App() {
     );
   }
 
+  function openLibrarySettings(type, item) {
+    setErrorMessage('');
+    setLibrarySettingsTarget({ type, item });
+
+    if (type === 'category') {
+      setLibrarySettingsDraft({
+        name: item.name,
+        multiplier: String(item.multiplier ?? 1),
+        parentId: item.parent_id ? String(item.parent_id) : '',
+      });
+      return;
+    }
+
+    setLibrarySettingsDraft({
+      name: item.name,
+      multiplier: String(item.multiplier ?? 1),
+      minimumMinutes: String(item.minimum_minutes ?? 0),
+      trackedMinutes: String(item.tracked_minutes ?? 0),
+      categoryId: String(item.category_id ?? ''),
+    });
+  }
+
+  function closeLibrarySettings() {
+    setLibrarySettingsTarget(null);
+    setLibrarySettingsDraft({});
+  }
+
+  async function handleSaveLibrarySettings() {
+    if (!librarySettingsTarget) {
+      return;
+    }
+
+    setErrorMessage('');
+
+    try {
+      if (librarySettingsTarget.type === 'category') {
+        const parentID = librarySettingsDraft.parentId ? Number(librarySettingsDraft.parentId) : null;
+        await apiFetch(`/categories/${librarySettingsTarget.item.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            name: String(librarySettingsDraft.name ?? ''),
+            multiplier: Number(librarySettingsDraft.multiplier ?? 1),
+            parent_id: parentID,
+          }),
+        });
+      } else {
+        await apiFetch(`/activities/${librarySettingsTarget.item.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            name: String(librarySettingsDraft.name ?? ''),
+            multiplier: Number(librarySettingsDraft.multiplier ?? 1),
+            minimum_minutes: Number(librarySettingsDraft.minimumMinutes ?? 0),
+            tracked_minutes: Number(librarySettingsDraft.trackedMinutes ?? 0),
+            category_id: Number(librarySettingsDraft.categoryId),
+          }),
+        });
+      }
+
+      await loadOwnedData();
+      closeLibrarySettings();
+      setStatusMessage('Saved changes.');
+    } catch (error) {
+      setErrorMessage(error.message);
+    }
+  }
+
+  async function handleDeleteLibraryTarget() {
+    if (!librarySettingsTarget) {
+      return;
+    }
+
+    const target = librarySettingsTarget;
+    closeLibrarySettings();
+
+    if (target.type === 'category') {
+      await deleteCategory(target.item);
+      return;
+    }
+
+    await deleteActivity(target.item);
+  }
+
   async function createCategoryInLibrary(parentCategory = null) {
     const targetParent = parentCategory ?? rootCategory;
     const name = window.prompt(
@@ -845,16 +929,34 @@ export default function App() {
     return (
       <div className="library-node" key={category.id}>
         <div className="library-row">
-          <button
+          <div
             className="library-row-main"
             onClick={() => toggleLibraryCategory(category.id)}
-            type="button"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggleLibraryCategory(category.id);
+              }
+            }}
+            role="button"
+            tabIndex={0}
             aria-expanded={isExpanded}
           >
             <span className="library-arrow" aria-hidden="true">{isExpanded ? '▾' : '▸'}</span>
             <span className="library-icon" aria-hidden="true">{isExpanded ? '📂' : '📁'}</span>
             <span className="library-label">{displayCategoryName(category.name)}</span>
-          </button>
+            <button
+              className="library-settings-btn"
+              type="button"
+              aria-label={`Settings for ${displayCategoryName(category.name)}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                openLibrarySettings('category', category);
+              }}
+            >
+              ⚙︎
+            </button>
+          </div>
         </div>
 
         {isExpanded ? (
@@ -865,6 +967,14 @@ export default function App() {
                 <span className="library-arrow placeholder" aria-hidden="true">•</span>
                 <span className="library-icon" aria-hidden="true">📄</span>
                 <span className="library-label">{activity.name}</span>
+                <button
+                  className="library-settings-btn"
+                  type="button"
+                  aria-label={`Settings for ${activity.name}`}
+                  onClick={() => openLibrarySettings('activity', activity)}
+                >
+                  ⚙︎
+                </button>
               </div>
             ))}
 
@@ -1246,6 +1356,130 @@ export default function App() {
             </section>
           ) : null}
         </>
+      ) : null}
+
+      {librarySettingsTarget ? (
+        <div
+          className="library-settings-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={closeLibrarySettings}
+        >
+          <div className="library-settings-modal card stack" onClick={(event) => event.stopPropagation()}>
+            <div className="section-heading">
+              <h2>
+                {librarySettingsTarget.type === 'category' ? 'Category settings' : 'Activity settings'}
+              </h2>
+              <button type="button" onClick={closeLibrarySettings} aria-label="Close settings">
+                ✕
+              </button>
+            </div>
+
+            <label>
+              Name
+              <input
+                value={String(librarySettingsDraft.name ?? '')}
+                onChange={(event) => setLibrarySettingsDraft((current) => ({
+                  ...current,
+                  name: event.target.value,
+                }))}
+              />
+            </label>
+
+            <label>
+              Multiplier
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={String(librarySettingsDraft.multiplier ?? '1')}
+                onChange={(event) => setLibrarySettingsDraft((current) => ({
+                  ...current,
+                  multiplier: event.target.value,
+                }))}
+              />
+            </label>
+
+            {librarySettingsTarget.type === 'category' ? (
+              <label>
+                Parent category
+                <select
+                  value={String(librarySettingsDraft.parentId ?? '')}
+                  onChange={(event) => setLibrarySettingsDraft((current) => ({
+                    ...current,
+                    parentId: event.target.value,
+                  }))}
+                >
+                  <option value="">Library root</option>
+                  {categories
+                    .filter((category) => category.id !== librarySettingsTarget.item.id)
+                    .map((category) => (
+                      <option key={category.id} value={String(category.id)}>
+                        {displayCategoryPath(category, categoryById)}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            ) : (
+              <>
+                <label>
+                  Minimum minutes
+                  <input
+                    type="number"
+                    min="0"
+                    value={String(librarySettingsDraft.minimumMinutes ?? '0')}
+                    onChange={(event) => setLibrarySettingsDraft((current) => ({
+                      ...current,
+                      minimumMinutes: event.target.value,
+                    }))}
+                  />
+                </label>
+
+                <label>
+                  Tracked minutes
+                  <input
+                    type="number"
+                    min="0"
+                    value={String(librarySettingsDraft.trackedMinutes ?? '0')}
+                    onChange={(event) => setLibrarySettingsDraft((current) => ({
+                      ...current,
+                      trackedMinutes: event.target.value,
+                    }))}
+                  />
+                </label>
+
+                <label>
+                  Category
+                  <select
+                    value={String(librarySettingsDraft.categoryId ?? '')}
+                    onChange={(event) => setLibrarySettingsDraft((current) => ({
+                      ...current,
+                      categoryId: event.target.value,
+                    }))}
+                  >
+                    {categories.map((category) => (
+                      <option key={category.id} value={String(category.id)}>
+                        {displayCategoryPath(category, categoryById)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
+
+            <div className="row gap wrap-row">
+              <button className="primary-button" type="button" onClick={() => void handleSaveLibrarySettings()}>
+                Save
+              </button>
+              {!(librarySettingsTarget.type === 'category' && isDefaultCategory(librarySettingsTarget.item)) ? (
+                <button className="destructive-button" type="button" onClick={() => void handleDeleteLibraryTarget()}>
+                  Delete
+                </button>
+              ) : null}
+              <button type="button" onClick={closeLibrarySettings}>Cancel</button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

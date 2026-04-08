@@ -262,12 +262,13 @@ func (h *ActivityHandler) handleUpdateActivity(w http.ResponseWriter, r *http.Re
 		Name           *string  `json:"name"`
 		Multiplier     *float64 `json:"multiplier"`
 		MinimumMinutes *int     `json:"minimum_minutes"`
+		TrackedMinutes *int     `json:"tracked_minutes"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if request.CategoryID == nil && request.Name == nil && request.Multiplier == nil && request.MinimumMinutes == nil {
+	if request.CategoryID == nil && request.Name == nil && request.Multiplier == nil && request.MinimumMinutes == nil && request.TrackedMinutes == nil {
 		writeErrorJSON(w, http.StatusBadRequest, "at least one activity field must be provided")
 		return
 	}
@@ -295,6 +296,13 @@ func (h *ActivityHandler) handleUpdateActivity(w http.ResponseWriter, r *http.Re
 	if request.MinimumMinutes != nil {
 		current.MinimumMinutes = *request.MinimumMinutes
 	}
+	if request.TrackedMinutes != nil {
+		if *request.TrackedMinutes < 0 {
+			writeErrorJSON(w, http.StatusBadRequest, "tracked_minutes must be 0 or greater")
+			return
+		}
+		current.TrackedMinutes = *request.TrackedMinutes
+	}
 
 	if err := validateActivityInput(current.Name, current.Multiplier, current.MinimumMinutes, true); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
@@ -307,7 +315,8 @@ func (h *ActivityHandler) handleUpdateActivity(w http.ResponseWriter, r *http.Re
 		 SET category_id = $3,
 		     name = $4,
 		     multiplier = $5,
-		     minimum_minutes = $6
+		     minimum_minutes = $6,
+		     tracked_minutes = $7
 		 FROM categories current_category, categories new_category
 		 WHERE a.id = $1
 		   AND a.category_id = current_category.id
@@ -321,6 +330,7 @@ func (h *ActivityHandler) handleUpdateActivity(w http.ResponseWriter, r *http.Re
 		current.Name,
 		current.Multiplier,
 		current.MinimumMinutes,
+		current.TrackedMinutes,
 	).Scan(
 		&current.ID,
 		&current.CategoryID,
