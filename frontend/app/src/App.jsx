@@ -149,6 +149,8 @@ export default function App() {
   const [hasRequestedRecommendation, setHasRequestedRecommendation] = useState(false);
   const [skippedRecommendationActivityIds, setSkippedRecommendationActivityIds] = useState([]);
   const [expandedLibraryCategories, setExpandedLibraryCategories] = useState({});
+  const [recommendationCategoryPickerOpen, setRecommendationCategoryPickerOpen] = useState(false);
+  const [expandedRecommendationCategories, setExpandedRecommendationCategories] = useState({});
   const [librarySettingsTarget, setLibrarySettingsTarget] = useState(null);
   const [librarySettingsDraft, setLibrarySettingsDraft] = useState({});
 
@@ -219,6 +221,23 @@ export default function App() {
     });
     return grouped;
   }, [categories, categoryById, rootCategory]);
+  const selectedRecommendationCategoryIdSet = useMemo(() => {
+    const selected = new Set();
+    const stack = [...selectedRecommendationCategoryIds];
+
+    while (stack.length > 0) {
+      const currentID = String(stack.pop());
+      if (selected.has(currentID)) {
+        continue;
+      }
+
+      selected.add(currentID);
+      const children = categoriesByParent[currentID] ?? [];
+      children.forEach((child) => stack.push(String(child.id)));
+    }
+
+    return selected;
+  }, [selectedRecommendationCategoryIds, categoriesByParent]);
   const overallTrackedMinutes = useMemo(
     () => activities.reduce((sum, activity) => sum + Number(activity.tracked_minutes ?? 0), 0),
     [activities],
@@ -593,9 +612,28 @@ export default function App() {
 
   function handleToggleRecommendationCategory(categoryId) {
     const id = String(categoryId);
+    const descendantIDs = [];
+    const stack = [id];
+    const seen = new Set();
+
+    while (stack.length > 0) {
+      const currentID = String(stack.pop());
+      if (seen.has(currentID)) {
+        continue;
+      }
+
+      seen.add(currentID);
+      descendantIDs.push(currentID);
+      const children = categoriesByParent[currentID] ?? [];
+      children.forEach((child) => stack.push(String(child.id)));
+    }
+
     const nextCategoryIds = selectedRecommendationCategoryIds.includes(id)
-      ? selectedRecommendationCategoryIds.filter((value) => value !== id)
-      : [...selectedRecommendationCategoryIds, id];
+      ? selectedRecommendationCategoryIds.filter((value) => !descendantIDs.includes(value))
+      : [
+        ...selectedRecommendationCategoryIds.filter((value) => !descendantIDs.includes(value)),
+        id,
+      ];
 
     setSelectedRecommendationCategoryIds(nextCategoryIds);
     setHasRequestedRecommendation(false);
@@ -604,6 +642,70 @@ export default function App() {
     setRecommendationMessage('');
     setErrorMessage('');
     setStatusMessage('');
+  }
+
+  function toggleRecommendationCategoryExpansion(categoryId) {
+    setExpandedRecommendationCategories((current) => ({
+      ...current,
+      [categoryId]: !current[categoryId],
+    }));
+  }
+
+  function expandAllRecommendationCategories() {
+    setExpandedRecommendationCategories(
+      Object.fromEntries(categories.map((category) => [category.id, true])),
+    );
+  }
+
+  function collapseAllRecommendationCategories() {
+    setExpandedRecommendationCategories(
+      Object.fromEntries(categories.map((category) => [category.id, false])),
+    );
+  }
+
+  function renderRecommendationCategoryTreeNode(category, depth = 0) {
+    const childCategories = categoriesByParent[String(category.id)] ?? [];
+    const isExpanded = expandedRecommendationCategories[category.id] ?? depth === 0;
+    const isSelected = selectedRecommendationCategoryIdSet.has(String(category.id));
+    const hasChildren = childCategories.length > 0;
+
+    return (
+      <div className="recommendation-tree-node" key={category.id}>
+        <div
+          className={isSelected ? 'recommendation-tree-item active' : 'recommendation-tree-item'}
+          onClick={() => handleToggleRecommendationCategory(category.id)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              handleToggleRecommendationCategory(category.id);
+            }
+          }}
+          role="button"
+          tabIndex={0}
+        >
+          <span
+            className={hasChildren ? 'library-arrow recommendation-inline-toggle' : 'library-arrow recommendation-inline-toggle muted'}
+            aria-hidden="true"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (hasChildren) {
+                toggleRecommendationCategoryExpansion(category.id);
+              }
+            }}
+          >
+            {hasChildren ? (isExpanded ? '▾' : '▸') : '•'}
+          </span>
+          <span className="library-icon" aria-hidden="true">📁</span>
+          <span className="library-label">{displayCategoryName(category.name)}</span>
+        </div>
+
+        {isExpanded && hasChildren ? (
+          <div className="recommendation-tree-children" role="group">
+            {childCategories.map((childCategory) => renderRecommendationCategoryTreeNode(childCategory, depth + 1))}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   async function handleRecommendActivity() {
@@ -1195,26 +1297,43 @@ export default function App() {
           {activeView === 'use' ? (
             <section className="stack">
               <article className="card stack">
-                <p className="muted-text center-text">from categories:</p>
+                <div className="section-heading">
+                  <h2>Choose from categories</h2>
+                  <span className="pill">
+                    {selectedRecommendationCategoryIdSet.size} selected
+                  </span>
+                </div>
 
                 {categories.length === 0 ? (
                   <p className="empty">Add a category first.</p>
                 ) : (
-                  <div className="filter-list">
-                    {categories.map((category) => {
-                      const isSelected = selectedRecommendationCategoryIds.includes(String(category.id));
+                  <div className="recommendation-picker stack">
+                    <button
+                      className="recommendation-picker-trigger"
+                      type="button"
+                      onClick={() => setRecommendationCategoryPickerOpen((open) => !open)}
+                      aria-expanded={recommendationCategoryPickerOpen}
+                    >
+                      Choose from categories
+                      <span aria-hidden="true">{recommendationCategoryPickerOpen ? '▴' : '▾'}</span>
+                    </button>
 
-                      return (
-                        <button
-                          key={category.id}
-                          className={isSelected ? 'filter-chip active' : 'filter-chip'}
-                          onClick={() => handleToggleRecommendationCategory(category.id)}
-                          type="button"
-                        >
-                          {displayCategoryPath(category, categoryById)}
-                        </button>
-                      );
-                    })}
+                    {recommendationCategoryPickerOpen ? (
+                      <div className="recommendation-picker-panel stack" role="region" aria-label="Category picker">
+                        <div className="row gap small-gap wrap-row">
+                          <button type="button" onClick={expandAllRecommendationCategories}>Expand all</button>
+                          <button type="button" onClick={collapseAllRecommendationCategories}>Collapse all</button>
+                        </div>
+
+                        <div className="recommendation-tree" role="tree" aria-label="Categories">
+                          {rootCategory
+                            ? renderRecommendationCategoryTreeNode(rootCategory, 0)
+                            : (categoriesByParent.root ?? []).map((category) => (
+                              renderRecommendationCategoryTreeNode(category, 0)
+                            ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 )}
 
