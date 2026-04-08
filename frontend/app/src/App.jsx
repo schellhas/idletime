@@ -64,6 +64,11 @@ function formatMinutes(value) {
   return parts.join(' ');
 }
 
+function formatHoursFromMinutes(value) {
+  const roundedHours = Math.round((Number(value ?? 0) / 60) * 10) / 10;
+  return Number.isInteger(roundedHours) ? `${roundedHours.toFixed(0)}h` : `${roundedHours.toFixed(1)}h`;
+}
+
 function currentValue(value) {
   return value ?? '';
 }
@@ -1512,7 +1517,7 @@ export default function App() {
                             style={{ background: slice.color }}
                           />
                           <span className="activity-pie-label">{slice.name}</span>
-                          <span className="activity-pie-value">{slice.percent}% · {formatMinutes(slice.minutes)}</span>
+                          <span className="activity-pie-value">{formatHoursFromMinutes(slice.minutes)}</span>
                         </div>
                       ))}
                     </div>
@@ -1556,7 +1561,7 @@ export default function App() {
                                   style={{ background: slice.color }}
                                 />
                                 <span className="category-pie-label">{slice.name}</span>
-                                <span className="category-pie-value">{slice.percent}%</span>
+                                <span className="category-pie-value">{formatHoursFromMinutes(slice.minutes)}</span>
                               </div>
                             ))}
                           </div>
@@ -1564,22 +1569,6 @@ export default function App() {
                       ) : (
                         <p className="empty">Track time in this category to populate its pie chart.</p>
                       )}
-
-                      <div className="item-list">
-                        {group.activities.length === 0 ? (
-                          <p className="empty">No activities in this category yet.</p>
-                        ) : group.activities.map((activity) => (
-                          <div className="progress-item" key={activity.id}>
-                            <div className="progress-item-header">
-                              <strong>{activity.name}</strong>
-                              <span>{formatMinutes(activity.trackedDisplayMinutes)}</span>
-                            </div>
-                            <p className="muted-text">
-                              Minimum {formatMinutes(activity.minimum_minutes)} · multiplier {activity.multiplier}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
 
                       {childGroups.length > 0 && (
                         <div className="nested-category-cards">
