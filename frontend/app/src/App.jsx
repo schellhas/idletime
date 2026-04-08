@@ -53,7 +53,15 @@ function formatTimestamp(value) {
 }
 
 function formatMinutes(value) {
-  return `${Number(value ?? 0)} min`;
+  const total = Math.round(Number(value ?? 0));
+  const days = Math.floor(total / (60 * 24));
+  const hours = Math.floor((total % (60 * 24)) / 60);
+  const mins = total % 60;
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  parts.push(`${mins}m`);
+  return parts.join(' ');
 }
 
 function currentValue(value) {
@@ -63,14 +71,14 @@ function currentValue(value) {
 function displayCategoryName(name) {
   const normalized = String(name ?? '').trim().toLowerCase();
   if (normalized === 'root' || normalized === 'none') {
-    return 'Library';
+    return 'Activities';
   }
-  return String(name ?? 'Library');
+  return String(name ?? 'Activities');
 }
 
 function displayCategoryPath(category, categoryById) {
   if (!category) {
-    return 'Library';
+    return 'Activities';
   }
 
   const parts = [];
@@ -78,12 +86,15 @@ function displayCategoryPath(category, categoryById) {
   let current = category;
 
   while (current && !seen.has(current.id)) {
-    parts.unshift(displayCategoryName(current.name));
+    const label = displayCategoryName(current.name);
+    if (label !== 'Activities') {
+      parts.unshift(label);
+    }
     seen.add(current.id);
     current = current.parent_id ? categoryById[current.parent_id] : null;
   }
 
-  return parts.join(' / ');
+  return parts.length > 0 ? parts.join(' / ') : 'Activities';
 }
 
 function isDefaultCategory(category) {
@@ -119,6 +130,62 @@ function formatTimerDuration(startedAt, now) {
   return `${minutes}:${seconds}`;
 }
 
+const PIE_COLORS = [
+  '#2563eb',
+  '#0ea5e9',
+  '#14b8a6',
+  '#22c55e',
+  '#84cc16',
+  '#eab308',
+  '#f97316',
+  '#ef4444',
+  '#ec4899',
+  '#8b5cf6',
+];
+
+function buildActivityPieData(activityList) {
+  const relevantActivities = activityList
+    .map((activity) => ({
+      id: activity.id,
+      name: activity.name,
+      minutes: Math.max(0, Number(activity.tracked_minutes ?? activity.trackedDisplayMinutes ?? 0)),
+    }))
+    .filter((activity) => activity.minutes > 0)
+    .sort((left, right) => right.minutes - left.minutes || left.name.localeCompare(right.name));
+
+  const totalMinutes = relevantActivities.reduce((sum, activity) => sum + activity.minutes, 0);
+  if (totalMinutes <= 0) {
+    return {
+      totalMinutes: 0,
+      gradient: 'conic-gradient(#dbe6f3 0deg 360deg)',
+      slices: [],
+    };
+  }
+
+  let currentAngle = 0;
+  const slices = relevantActivities.map((activity, index) => {
+    const angle = (activity.minutes / totalMinutes) * 360;
+    const start = currentAngle;
+    const end = currentAngle + angle;
+    currentAngle = end;
+    const color = PIE_COLORS[index % PIE_COLORS.length];
+    const percent = Math.round((activity.minutes / totalMinutes) * 100);
+
+    return {
+      ...activity,
+      color,
+      percent,
+      gradientStop: `${color} ${start}deg ${end}deg`,
+    };
+  });
+
+  return {
+    totalMinutes,
+    gradient: `conic-gradient(${slices.map((slice) => slice.gradientStop).join(', ')})`,
+    slices,
+  };
+}
+
 export default function App() {
   const [theme, setTheme] = useState(() => {
     const saved = window.localStorage.getItem('idletime_theme');
@@ -151,8 +218,11 @@ export default function App() {
   const [expandedLibraryCategories, setExpandedLibraryCategories] = useState({});
   const [recommendationCategoryPickerOpen, setRecommendationCategoryPickerOpen] = useState(false);
   const [expandedRecommendationCategories, setExpandedRecommendationCategories] = useState({});
+  const [libraryCreateTarget, setLibraryCreateTarget] = useState(null);
+  const [libraryCreateDraft, setLibraryCreateDraft] = useState({ name: '' });
   const [librarySettingsTarget, setLibrarySettingsTarget] = useState(null);
   const [librarySettingsDraft, setLibrarySettingsDraft] = useState({});
+  const [dragMultipliers, setDragMultipliers] = useState({});
 
   const [loginForm, setLoginForm] = useState({
     identifier: '',
@@ -219,8 +289,25 @@ export default function App() {
       }
       grouped[parentKey].push(category);
     });
+    // sort each group alphabetically
+    for (const key of Object.keys(grouped)) {
+      grouped[key].sort((a, b) => String(a.name ?? '').localeCompare(String(b.name ?? '')));
+    }
     return grouped;
   }, [categories, categoryById, rootCategory]);
+  // flat list of categories in DFS tree order (matches the category tree)
+  const categoriesInTreeOrder = useMemo(() => {
+    const result = [];
+    function walk(parentId) {
+      const children = categoriesByParent[String(parentId)] ?? [];
+      for (const child of children) {
+        result.push(child);
+        walk(child.id);
+      }
+    }
+    if (rootCategory) walk(rootCategory.id);
+    return result;
+  }, [categoriesByParent, rootCategory]);
   const selectedRecommendationCategoryIdSet = useMemo(() => {
     const selected = new Set();
     const stack = [...selectedRecommendationCategoryIds];
@@ -289,6 +376,9 @@ export default function App() {
         (left, right) => right.totalTrackedMinutes - left.totalTrackedMinutes || left.name.localeCompare(right.name),
       );
   }, [activities, categories, overallTrackedMinutes]);
+  const activityPieChart = useMemo(() => {
+    return buildActivityPieData(activities);
+  }, [activities]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -864,67 +954,76 @@ export default function App() {
     await deleteActivity(target.item);
   }
 
-  async function createCategoryInLibrary(parentCategory = null) {
-    const targetParent = parentCategory ?? rootCategory;
-    const name = window.prompt(
-      targetParent
-        ? `New category inside “${displayCategoryPath(targetParent, categoryById)}”`
-        : 'New category name',
-    );
-    if (name === null) {
-      return;
-    }
-
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setErrorMessage('Category name is required.');
-      return;
-    }
-
-    setErrorMessage('');
-
+  async function saveMultiplier(activityId, value) {
     try {
-      const response = await apiFetch('/categories', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: trimmedName,
-          multiplier: 1,
-          parent_id: targetParent?.id ?? 0,
-        }),
+      await apiFetch(`/activities/${activityId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ multiplier: value }),
       });
-
-      const createdCategoryID = response.category?.id;
-      setExpandedLibraryCategories((current) => ({
-        ...current,
-        ...(targetParent ? { [targetParent.id]: true } : {}),
-        ...(createdCategoryID ? { [createdCategoryID]: true } : {}),
-      }));
       await loadOwnedData();
-      setStatusMessage(targetParent ? 'Category added.' : 'Category added.');
     } catch (error) {
       setErrorMessage(error.message);
+    } finally {
+      setDragMultipliers((m) => {
+        const next = { ...m };
+        delete next[activityId];
+        return next;
+      });
     }
   }
 
-  async function createActivityInLibrary(category) {
-    const name = window.prompt(`New activity inside “${displayCategoryPath(category, categoryById)}”`);
-    if (name === null) {
+  function openLibraryCreate(target) {
+    setErrorMessage('');
+    setLibraryCreateDraft({ name: '' });
+    setLibraryCreateTarget(target);
+  }
+
+  function closeLibraryCreate() {
+    setLibraryCreateTarget(null);
+    setLibraryCreateDraft({ name: '' });
+  }
+
+  async function handleSubmitLibraryCreate(event) {
+    event.preventDefault();
+    if (!libraryCreateTarget) {
       return;
     }
 
-    const trimmedName = name.trim();
+    const trimmedName = String(libraryCreateDraft.name ?? '').trim();
     if (!trimmedName) {
-      setErrorMessage('Activity name is required.');
+      setErrorMessage(`${libraryCreateTarget.type === 'category' ? 'Category' : 'Activity'} name is required.`);
       return;
     }
 
     setErrorMessage('');
 
     try {
+      if (libraryCreateTarget.type === 'category') {
+        const response = await apiFetch('/categories', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: trimmedName,
+            multiplier: 1,
+            parent_id: libraryCreateTarget.parentCategoryID ?? 0,
+          }),
+        });
+
+        const createdCategoryID = response.category?.id;
+        setExpandedLibraryCategories((current) => ({
+          ...current,
+          ...(libraryCreateTarget.parentCategoryID ? { [libraryCreateTarget.parentCategoryID]: true } : {}),
+          ...(createdCategoryID ? { [createdCategoryID]: true } : {}),
+        }));
+        await loadOwnedData();
+        closeLibraryCreate();
+        setStatusMessage('Category added.');
+        return;
+      }
+
       await apiFetch('/activities', {
         method: 'POST',
         body: JSON.stringify({
-          category_id: category.id,
+          category_id: libraryCreateTarget.categoryID,
           name: trimmedName,
           multiplier: 1,
           minimum_minutes: 0,
@@ -932,13 +1031,31 @@ export default function App() {
       });
       setExpandedLibraryCategories((current) => ({
         ...current,
-        [category.id]: true,
+        [libraryCreateTarget.categoryID]: true,
       }));
       await loadOwnedData();
+      closeLibraryCreate();
       setStatusMessage('Activity added.');
     } catch (error) {
       setErrorMessage(error.message);
     }
+  }
+
+  async function createCategoryInLibrary(parentCategory = null) {
+    const targetParent = parentCategory ?? rootCategory;
+    openLibraryCreate({
+      type: 'category',
+      parentCategoryID: targetParent?.id ?? 0,
+      parentLabel: targetParent ? displayCategoryPath(targetParent, categoryById) : 'Library',
+    });
+  }
+
+  async function createActivityInLibrary(category) {
+    openLibraryCreate({
+      type: 'activity',
+      categoryID: category.id,
+      parentLabel: displayCategoryPath(category, categoryById),
+    });
   }
 
   async function deleteCategory(category) {
@@ -1283,14 +1400,14 @@ export default function App() {
               onClick={() => setActiveView('progress')}
               type="button"
             >
-              Progress
+              Stats
             </button>
             <button
               className={activeView === 'edit' ? 'nav-tab active' : 'nav-tab'}
               onClick={() => setActiveView('edit')}
               type="button"
             >
-              Library
+              Edit
             </button>
           </nav>
 
@@ -1373,81 +1490,116 @@ export default function App() {
             <section className="stack">
               <article className="card stack">
                 <div className="section-heading">
-                  <div>
-                    <p className="eyebrow">Progress</p>
-                    <h2>Where your time is going</h2>
-                  </div>
-                  <span className="pill">{formatMinutes(overallTrackedMinutes)} total</span>
+                  <h2>All activities</h2>
+                  <span className="pill">{formatMinutes(activityPieChart.totalMinutes)} tracked</span>
                 </div>
 
-                <div className="stat-grid">
-                  <div className="stat-tile">
-                    <strong>{categoryProgress.length}</strong>
-                    <span>Categories in play</span>
-                  </div>
-                  <div className="stat-tile">
-                    <strong>{activities.length}</strong>
-                    <span>Tracked activities</span>
-                  </div>
-                  <div className="stat-tile">
-                    <strong>{timeEntries.length}</strong>
-                    <span>Saved sessions</span>
-                  </div>
-                  <div className="stat-tile">
-                    <strong>{overallTrackedMinutes}</strong>
-                    <span>Total minutes</span>
-                  </div>
-                </div>
-              </article>
+                {activityPieChart.totalMinutes > 0 ? (
+                  <div className="activity-pie-layout">
+                    <div
+                      className="activity-pie"
+                      aria-label="Activity time distribution pie chart"
+                      role="img"
+                      style={{ background: activityPieChart.gradient }}
+                    />
 
-              <div className="progress-grid">
-                {categoryProgress.length === 0 ? (
-                  <article className="card">
-                    <p className="empty">Add a category and an activity to start seeing progress here.</p>
-                  </article>
-                ) : categoryProgress.map((group) => (
-                  <article className="card stack" key={group.id}>
-                    <div className="section-heading">
-                      <div>
-                        <h2>{displayCategoryPath(group, categoryById)}</h2>
-                        <p className="muted-text">
-                          {group.activities.length} activities · multiplier {group.multiplier}
-                        </p>
-                      </div>
-                      {isDefaultCategory(group) ? <span className="pill">Default</span> : null}
-                    </div>
-
-                    <div className="row gap wrap-row">
-                      <span className="pill success">{formatMinutes(group.totalTrackedMinutes)} tracked</span>
-                      <span className="pill">{group.shareOfAll}% of all tracked time</span>
-                      <span className="pill">Balance score {group.normalizedProgress.toFixed(1)}</span>
-                    </div>
-
-                    <div className="mini-chart" aria-hidden="true">
-                      <span style={{ width: `${group.totalPercent}%` }} />
-                    </div>
-
-                    <div className="item-list">
-                      {group.activities.length === 0 ? (
-                        <p className="empty">No activities in this category yet.</p>
-                      ) : group.activities.map((activity) => (
-                        <div className="progress-item" key={activity.id}>
-                          <div className="progress-item-header">
-                            <strong>{activity.name}</strong>
-                            <span>{formatMinutes(activity.trackedDisplayMinutes)}</span>
-                          </div>
-                          <div className="mini-chart small" aria-hidden="true">
-                            <span style={{ width: `${activity.percent}%` }} />
-                          </div>
-                          <p className="muted-text">
-                            Minimum {formatMinutes(activity.minimum_minutes)} · multiplier {activity.multiplier}
-                          </p>
+                    <div className="activity-pie-legend">
+                      {activityPieChart.slices.map((slice) => (
+                        <div className="activity-pie-legend-item" key={slice.id}>
+                          <span
+                            className="activity-pie-color"
+                            aria-hidden="true"
+                            style={{ background: slice.color }}
+                          />
+                          <span className="activity-pie-label">{slice.name}</span>
+                          <span className="activity-pie-value">{slice.percent}% · {formatMinutes(slice.minutes)}</span>
                         </div>
                       ))}
                     </div>
-                  </article>
-                ))}
-              </div>
+                  </div>
+                ) : (
+                  <p className="empty">Track some activity time to populate the pie chart.</p>
+                )}
+              </article>
+
+              {(() => {
+                const progressById = Object.fromEntries(categoryProgress.map((g) => [g.id, g]));
+                function renderStatsGroup(group) {
+                  const childCategories = categoriesByParent[String(group.id)] ?? [];
+                  const childGroups = childCategories.map((c) => progressById[c.id]).filter(Boolean);
+                  const groupPieChart = buildActivityPieData(group.activities);
+                  return (
+                    <article className="card stack" key={group.id}>
+                      <div className="section-heading">
+                        <h2>{displayCategoryName(group.name)}</h2>
+                        <div className="row gap small-gap wrap-row">
+                          <span className="pill success">{formatMinutes(group.totalTrackedMinutes)} tracked</span>
+                          {isDefaultCategory(group) ? <span className="pill">Default</span> : null}
+                        </div>
+                      </div>
+
+                      {groupPieChart.totalMinutes > 0 ? (
+                        <div className="category-pie-layout">
+                          <div
+                            className="category-pie"
+                            aria-label={`Activity distribution for ${displayCategoryName(group.name)}`}
+                            role="img"
+                            style={{ background: groupPieChart.gradient }}
+                          />
+
+                          <div className="category-pie-legend">
+                            {groupPieChart.slices.map((slice) => (
+                              <div className="category-pie-legend-item" key={slice.id}>
+                                <span
+                                  className="category-pie-color"
+                                  aria-hidden="true"
+                                  style={{ background: slice.color }}
+                                />
+                                <span className="category-pie-label">{slice.name}</span>
+                                <span className="category-pie-value">{slice.percent}%</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="empty">Track time in this category to populate its pie chart.</p>
+                      )}
+
+                      <div className="item-list">
+                        {group.activities.length === 0 ? (
+                          <p className="empty">No activities in this category yet.</p>
+                        ) : group.activities.map((activity) => (
+                          <div className="progress-item" key={activity.id}>
+                            <div className="progress-item-header">
+                              <strong>{activity.name}</strong>
+                              <span>{formatMinutes(activity.trackedDisplayMinutes)}</span>
+                            </div>
+                            <p className="muted-text">
+                              Minimum {formatMinutes(activity.minimum_minutes)} · multiplier {activity.multiplier}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+
+                      {childGroups.length > 0 && (
+                        <div className="nested-category-cards">
+                          {childGroups.map(renderStatsGroup)}
+                        </div>
+                      )}
+                    </article>
+                  );
+                }
+                const topLevel = (categoriesByParent[rootCategory ? String(rootCategory.id) : 'root'] ?? [])
+                  .map((c) => progressById[c.id]).filter(Boolean);
+                if (topLevel.length === 0) {
+                  return (
+                    <article className="card">
+                      <p className="empty">Add a category and an activity to start seeing progress here.</p>
+                    </article>
+                  );
+                }
+                return <div className="progress-grid">{topLevel.map(renderStatsGroup)}</div>;
+              })()}
             </section>
           ) : null}
 
@@ -1455,7 +1607,7 @@ export default function App() {
             <section className="stack">
               <article className="card stack">
                 <div className="section-heading">
-                  <h2>Library</h2>
+                  <h2>Category tree</h2>
                   <div className="row gap small-gap wrap-row">
                     <button type="button" onClick={expandAllLibraryCategories}>Expand all</button>
                     <button type="button" onClick={collapseAllLibraryCategories}>Collapse all</button>
@@ -1472,6 +1624,106 @@ export default function App() {
                   )}
                 </div>
               </article>
+
+              {(() => {
+                const progressById = Object.fromEntries(categoryProgress.map((g) => [g.id, g]));
+                function renderEditGroup(group) {
+                  const childCategories = categoriesByParent[String(group.id)] ?? [];
+                  const childGroups = childCategories.map((c) => progressById[c.id]).filter(Boolean);
+                  const rawMax = Math.max(1, ...group.activities.map((a) => Number(a.multiplier ?? 1)));
+                  const maxScale = Math.max(rawMax, 5);
+                  const sorted = [...group.activities].sort(
+                    (a, b) => Number(b.multiplier ?? 1) - Number(a.multiplier ?? 1),
+                  );
+                  return (
+                    <article className="card stack" key={group.id}>
+                      <div className="section-heading">
+                        <h2>{displayCategoryName(group.name)}</h2>
+                        {isDefaultCategory(group) ? <span className="pill">Default</span> : null}
+                      </div>
+                      {sorted.length === 0 ? (
+                        <p className="empty">No activities in this category yet.</p>
+                      ) : (
+                        <div className="item-list">
+                          {sorted.map((activity) => {
+                            const activeMultiplier = dragMultipliers[activity.id] ?? Number(activity.multiplier ?? 1);
+                            const pct = Math.min(100, Math.round((activeMultiplier / maxScale) * 100));
+                            return (
+                              <div className="edit-multiplier-row" key={activity.id}>
+                                <span className="edit-multiplier-name">{activity.name}</span>
+                                <div
+                                  className="edit-multiplier-track"
+                                  onPointerDown={(e) => {
+                                    e.currentTarget.setPointerCapture(e.pointerId);
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const val = Math.max(0, Math.round(((e.clientX - rect.left) / rect.width) * maxScale * 10) / 10);
+                                    setDragMultipliers((m) => ({ ...m, [activity.id]: val }));
+                                  }}
+                                  onPointerMove={(e) => {
+                                    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const val = Math.max(0, Math.round(((e.clientX - rect.left) / rect.width) * maxScale * 10) / 10);
+                                    setDragMultipliers((m) => ({ ...m, [activity.id]: val }));
+                                  }}
+                                  onPointerUp={(e) => {
+                                    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                                    e.currentTarget.releasePointerCapture(e.pointerId);
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const val = Math.max(0, Math.round(((e.clientX - rect.left) / rect.width) * maxScale * 10) / 10);
+                                    void saveMultiplier(activity.id, val);
+                                  }}
+                                  onPointerCancel={(e) => {
+                                    setDragMultipliers((m) => { const next = { ...m }; delete next[activity.id]; return next; });
+                                  }}
+                                >
+                                  <div className="edit-multiplier-fill" style={{ width: `${pct}%` }} />
+                                </div>
+                                <input
+                                  className="edit-multiplier-value no-spin"
+                                  type="number"
+                                  min="0"
+                                  step="0.1"
+                                  value={dragMultipliers[activity.id] !== undefined ? activeMultiplier.toFixed(1) : activeMultiplier}
+                                  onChange={(e) => {
+                                    setDragMultipliers((m) => ({ ...m, [activity.id]: Number(e.target.value) }));
+                                  }}
+                                  onBlur={(e) => {
+                                    const val = Math.max(0, Math.round(Number(e.target.value) * 10) / 10);
+                                    void saveMultiplier(activity.id, val);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') e.currentTarget.blur();
+                                    if (e.key === 'Escape') {
+                                      setDragMultipliers((m) => { const next = { ...m }; delete next[activity.id]; return next; });
+                                      e.currentTarget.blur();
+                                    }
+                                  }}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {childGroups.length > 0 && (
+                        <div className="nested-category-cards">
+                          {childGroups.map(renderEditGroup)}
+                        </div>
+                      )}
+                    </article>
+                  );
+                }
+                const topLevel = (categoriesByParent[rootCategory ? String(rootCategory.id) : 'root'] ?? [])
+                  .map((c) => progressById[c.id]).filter(Boolean);
+                if (topLevel.length === 0) {
+                  return (
+                    <article className="card">
+                      <p className="empty">Add a category and activities to see multiplier charts here.</p>
+                    </article>
+                  );
+                }
+                return <div className="progress-grid">{topLevel.map(renderEditGroup)}</div>;
+              })()}
             </section>
           ) : null}
         </>
@@ -1508,6 +1760,7 @@ export default function App() {
             <label>
               Multiplier
               <input
+                className="no-spin"
                 type="number"
                 min="0"
                 step="0.1"
@@ -1544,6 +1797,7 @@ export default function App() {
                 <label>
                   Minimum minutes
                   <input
+                    className="no-spin"
                     type="number"
                     min="0"
                     value={String(librarySettingsDraft.minimumMinutes ?? '0')}
@@ -1557,6 +1811,7 @@ export default function App() {
                 <label>
                   Tracked minutes
                   <input
+                    className="no-spin"
                     type="number"
                     min="0"
                     value={String(librarySettingsDraft.trackedMinutes ?? '0')}
@@ -1598,6 +1853,45 @@ export default function App() {
               <button type="button" onClick={closeLibrarySettings}>Cancel</button>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {libraryCreateTarget ? (
+        <div
+          className="library-settings-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={closeLibraryCreate}
+        >
+          <form className="library-settings-modal card stack" onClick={(event) => event.stopPropagation()} onSubmit={handleSubmitLibraryCreate}>
+            <div className="section-heading">
+              <h2>{libraryCreateTarget.type === 'category' ? 'New category' : 'New activity'}</h2>
+              <button type="button" onClick={closeLibraryCreate} aria-label="Close create dialog">
+                ✕
+              </button>
+            </div>
+
+            <p className="muted-text">
+              Inside {libraryCreateTarget.parentLabel}
+            </p>
+
+            <label>
+              Name
+              <input
+                autoFocus
+                value={String(libraryCreateDraft.name ?? '')}
+                onChange={(event) => setLibraryCreateDraft((current) => ({
+                  ...current,
+                  name: event.target.value,
+                }))}
+              />
+            </label>
+
+            <div className="row gap wrap-row">
+              <button className="primary-button" type="submit">Create</button>
+              <button type="button" onClick={closeLibraryCreate}>Cancel</button>
+            </div>
+          </form>
         </div>
       ) : null}
     </div>
