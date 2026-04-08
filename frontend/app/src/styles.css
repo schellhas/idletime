@@ -164,6 +164,17 @@ textarea {
   border-color: #334155;
 }
 
+:root[data-theme='dark'] .destructive-button {
+  background: #7f1d1d;
+  color: #fee2e2;
+  border-color: #991b1b;
+}
+
+:root[data-theme='dark'] .destructive-button:hover:not(:disabled) {
+  background: #991b1b;
+  border-color: #b91c1c;
+}
+
 :root[data-theme='dark'] .library-settings-btn {
   background: transparent !important;
   color: #94a3b8;
@@ -776,9 +787,19 @@ textarea {
 }
 
 .destructive-button {
-  background: #fee2e2;
-  color: #b91c1c;
-  border: 1px solid #fecaca;
+  background: #dc2626;
+  color: #fff;
+  border: 1px solid #b91c1c;
+}
+
+.destructive-button:hover:not(:disabled) {
+  background: #b91c1c;
+  border-color: #991b1b;
+}
+
+.destructive-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .library-actions {

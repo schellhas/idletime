@@ -66,6 +66,9 @@ function formatMinutes(value) {
 
 function formatHoursFromMinutes(value) {
   const roundedHours = Math.round((Number(value ?? 0) / 60) * 10) / 10;
+  if (roundedHours === 0) {
+    return '0';
+  }
   return Number.isInteger(roundedHours) ? `${roundedHours.toFixed(0)}h` : `${roundedHours.toFixed(1)}h`;
 }
 
@@ -148,47 +151,67 @@ const PIE_COLORS = [
   '#8b5cf6',
 ];
 
-function buildActivityPieData(activityList) {
-  const relevantActivities = activityList
-    .map((activity) => ({
-      id: activity.id,
-      name: activity.name,
-      minutes: Math.max(0, Number(activity.tracked_minutes ?? activity.trackedDisplayMinutes ?? 0)),
+function buildPieData(entries, options = {}) {
+  const normalizedEntries = entries
+    .map((entry) => ({
+      ...entry,
+      minutes: Math.max(0, Number(entry.minutes ?? 0)),
     }))
-    .filter((activity) => activity.minutes > 0)
     .sort((left, right) => right.minutes - left.minutes || left.name.localeCompare(right.name));
 
-  const totalMinutes = relevantActivities.reduce((sum, activity) => sum + activity.minutes, 0);
-  if (totalMinutes <= 0) {
-    return {
-      totalMinutes: 0,
-      gradient: 'conic-gradient(#dbe6f3 0deg 360deg)',
-      slices: [],
-    };
-  }
+  const includeZeroEntries = options.includeZeroEntries === true;
+  const relevantEntries = includeZeroEntries
+    ? normalizedEntries
+    : normalizedEntries.filter((entry) => entry.minutes > 0);
+
+  const totalMinutes = relevantEntries.reduce((sum, entry) => sum + entry.minutes, 0);
+  const positiveTotalMinutes = relevantEntries.reduce(
+    (sum, entry) => sum + (entry.minutes > 0 ? entry.minutes : 0),
+    0,
+  );
 
   let currentAngle = 0;
-  const slices = relevantActivities.map((activity, index) => {
-    const angle = (activity.minutes / totalMinutes) * 360;
+  const slices = relevantEntries.map((entry, index) => {
     const start = currentAngle;
-    const end = currentAngle + angle;
-    currentAngle = end;
+    let end = currentAngle;
+    if (positiveTotalMinutes > 0 && entry.minutes > 0) {
+      const angle = (entry.minutes / positiveTotalMinutes) * 360;
+      end = currentAngle + angle;
+      currentAngle = end;
+    }
     const color = PIE_COLORS[index % PIE_COLORS.length];
-    const percent = Math.round((activity.minutes / totalMinutes) * 100);
+    const percent = positiveTotalMinutes > 0
+      ? Math.round((entry.minutes / positiveTotalMinutes) * 100)
+      : 0;
 
     return {
-      ...activity,
+      ...entry,
       color,
       percent,
       gradientStop: `${color} ${start}deg ${end}deg`,
     };
   });
 
+  const positiveSlices = slices.filter((slice) => slice.minutes > 0);
+
   return {
     totalMinutes,
-    gradient: `conic-gradient(${slices.map((slice) => slice.gradientStop).join(', ')})`,
+    gradient: positiveSlices.length > 0
+      ? `conic-gradient(${positiveSlices.map((slice) => slice.gradientStop).join(', ')})`
+      : 'conic-gradient(#dbe6f3 0deg 360deg)',
     slices,
   };
+}
+
+function buildActivityPieData(activityList) {
+  return buildPieData(
+    activityList.map((activity) => ({
+      id: `activity-${activity.id}`,
+      name: activity.name,
+      minutes: Math.max(0, Number(activity.tracked_minutes ?? activity.trackedDisplayMinutes ?? 0)),
+    })),
+    { includeZeroEntries: true },
+  );
 }
 
 export default function App() {
@@ -227,6 +250,7 @@ export default function App() {
   const [libraryCreateDraft, setLibraryCreateDraft] = useState({ name: '' });
   const [librarySettingsTarget, setLibrarySettingsTarget] = useState(null);
   const [librarySettingsDraft, setLibrarySettingsDraft] = useState({});
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState(null);
   const [dragMultipliers, setDragMultipliers] = useState({});
 
   const [loginForm, setLoginForm] = useState({
@@ -334,6 +358,28 @@ export default function App() {
     () => activities.reduce((sum, activity) => sum + Number(activity.tracked_minutes ?? 0), 0),
     [activities],
   );
+  const subtreeTrackedMinutesByCategoryId = useMemo(() => {
+    const cache = {};
+
+    function sumForCategory(categoryId) {
+      if (cache[categoryId] !== undefined) {
+        return cache[categoryId];
+      }
+
+      const ownMinutes = (activitiesByCategoryId[String(categoryId)] ?? [])
+        .reduce((sum, activity) => sum + Number(activity.tracked_minutes ?? 0), 0);
+      const childMinutes = (categoriesByParent[String(categoryId)] ?? [])
+        .reduce((sum, child) => sum + sumForCategory(child.id), 0);
+      cache[categoryId] = ownMinutes + childMinutes;
+      return cache[categoryId];
+    }
+
+    categories.forEach((category) => {
+      sumForCategory(category.id);
+    });
+
+    return cache;
+  }, [activitiesByCategoryId, categories, categoriesByParent]);
   const categoryProgress = useMemo(() => {
     const maxCategoryMinutes = Math.max(
       1,
@@ -350,10 +396,11 @@ export default function App() {
           .filter((activity) => activity.category_id === category.id)
           .sort((left, right) => Number(right.tracked_minutes ?? 0) - Number(left.tracked_minutes ?? 0));
 
-        const totalTrackedMinutes = categoryActivities.reduce(
+        const directTrackedMinutes = categoryActivities.reduce(
           (sum, activity) => sum + Number(activity.tracked_minutes ?? 0),
           0,
         );
+        const totalTrackedMinutes = Number(subtreeTrackedMinutesByCategoryId[category.id] ?? directTrackedMinutes);
         const maxActivityMinutes = Math.max(
           1,
           ...categoryActivities.map((activity) => Number(activity.tracked_minutes ?? 0)),
@@ -363,6 +410,7 @@ export default function App() {
 
         return {
           ...category,
+          directTrackedMinutes,
           totalTrackedMinutes,
           totalWeight,
           normalizedProgress: totalWeight > 0 ? totalTrackedMinutes / totalWeight : totalTrackedMinutes,
@@ -380,7 +428,7 @@ export default function App() {
       .sort(
         (left, right) => right.totalTrackedMinutes - left.totalTrackedMinutes || left.name.localeCompare(right.name),
       );
-  }, [activities, categories, overallTrackedMinutes]);
+  }, [activities, categories, overallTrackedMinutes, subtreeTrackedMinutesByCategoryId]);
   const activityPieChart = useMemo(() => {
     return buildActivityPieData(activities);
   }, [activities]);
@@ -949,7 +997,26 @@ export default function App() {
     }
 
     const target = librarySettingsTarget;
+    if (target.type === 'category' && isDefaultCategory(target.item)) {
+      setStatusMessage('The root "Activities" category cannot be deleted.');
+      return;
+    }
+
     closeLibrarySettings();
+    setDeleteConfirmTarget(target);
+  }
+
+  function cancelDeleteLibraryTarget() {
+    setDeleteConfirmTarget(null);
+  }
+
+  async function confirmDeleteLibraryTarget() {
+    if (!deleteConfirmTarget) {
+      return;
+    }
+
+    const target = deleteConfirmTarget;
+    setDeleteConfirmTarget(null);
 
     if (target.type === 'category') {
       await deleteCategory(target.item);
@@ -971,7 +1038,25 @@ export default function App() {
     } finally {
       setDragMultipliers((m) => {
         const next = { ...m };
-        delete next[activityId];
+        delete next[`activity-${activityId}`];
+        return next;
+      });
+    }
+  }
+
+  async function saveCategoryMultiplier(categoryId, value) {
+    try {
+      await apiFetch(`/categories/${categoryId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ multiplier: value }),
+      });
+      await loadOwnedData();
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setDragMultipliers((m) => {
+        const next = { ...m };
+        delete next[`category-${categoryId}`];
         return next;
       });
     }
@@ -1065,11 +1150,7 @@ export default function App() {
 
   async function deleteCategory(category) {
     if (isDefaultCategory(category)) {
-      setStatusMessage('The root “Library” category cannot be deleted.');
-      return;
-    }
-
-    if (!window.confirm(`Delete category “${category.name}”?`)) {
+      setStatusMessage('The root "Activities" category cannot be deleted.');
       return;
     }
 
@@ -1086,10 +1167,6 @@ export default function App() {
 
 
   async function deleteActivity(activity) {
-    if (!window.confirm(`Delete activity “${activity.name}”?`)) {
-      return;
-    }
-
     setErrorMessage('');
 
     try {
@@ -1499,7 +1576,7 @@ export default function App() {
                   <span className="pill">{formatMinutes(activityPieChart.totalMinutes)} tracked</span>
                 </div>
 
-                {activityPieChart.totalMinutes > 0 ? (
+                {activityPieChart.slices.length > 0 ? (
                   <div className="activity-pie-layout">
                     <div
                       className="activity-pie"
@@ -1523,7 +1600,7 @@ export default function App() {
                     </div>
                   </div>
                 ) : (
-                  <p className="empty">Track some activity time to populate the pie chart.</p>
+                  <p className="empty">No activities yet.</p>
                 )}
               </article>
 
@@ -1532,7 +1609,18 @@ export default function App() {
                 function renderStatsGroup(group) {
                   const childCategories = categoriesByParent[String(group.id)] ?? [];
                   const childGroups = childCategories.map((c) => progressById[c.id]).filter(Boolean);
-                  const groupPieChart = buildActivityPieData(group.activities);
+                  const groupPieChart = buildPieData([
+                    ...group.activities.map((activity) => ({
+                      id: `activity-${activity.id}`,
+                      name: activity.name,
+                      minutes: Number(activity.tracked_minutes ?? activity.trackedDisplayMinutes ?? 0),
+                    })),
+                    ...childGroups.map((childGroup) => ({
+                      id: `category-${childGroup.id}`,
+                      name: displayCategoryName(childGroup.name),
+                      minutes: Number(childGroup.totalTrackedMinutes ?? 0),
+                    })),
+                  ], { includeZeroEntries: true });
                   return (
                     <article className="card stack" key={group.id}>
                       <div className="section-heading">
@@ -1543,7 +1631,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      {groupPieChart.totalMinutes > 0 ? (
+                      {groupPieChart.slices.length > 0 ? (
                         <div className="category-pie-layout">
                           <div
                             className="category-pie"
@@ -1567,7 +1655,7 @@ export default function App() {
                           </div>
                         </div>
                       ) : (
-                        <p className="empty">Track time in this category to populate its pie chart.</p>
+                        <p className="empty">No activities or child categories in this category yet.</p>
                       )}
 
                       {childGroups.length > 0 && (
@@ -1619,50 +1707,126 @@ export default function App() {
                 function renderEditGroup(group) {
                   const childCategories = categoriesByParent[String(group.id)] ?? [];
                   const childGroups = childCategories.map((c) => progressById[c.id]).filter(Boolean);
-                  const rawMax = Math.max(1, ...group.activities.map((a) => Number(a.multiplier ?? 1)));
+                  const selfDragKey = `category-${group.id}`;
+                  const selfMultiplier = dragMultipliers[selfDragKey] ?? Number(group.multiplier ?? 1);
+                  const faderItems = [
+                    ...childGroups.map((childGroup) => ({
+                      type: 'category',
+                      id: childGroup.id,
+                      name: displayCategoryName(childGroup.name),
+                      multiplier: Number(childGroup.multiplier ?? 1),
+                    })),
+                    ...group.activities.map((activity) => ({
+                      type: 'activity',
+                      id: activity.id,
+                      name: activity.name,
+                      multiplier: Number(activity.multiplier ?? 1),
+                    })),
+                  ];
+                  const rawMax = Math.max(1, selfMultiplier, ...faderItems.map((item) => item.multiplier));
                   const maxScale = Math.max(rawMax, 5);
-                  const sorted = [...group.activities].sort(
-                    (a, b) => Number(b.multiplier ?? 1) - Number(a.multiplier ?? 1),
+                  const sorted = [...faderItems].sort(
+                    (a, b) => b.multiplier - a.multiplier || a.name.localeCompare(b.name),
                   );
+                  const selfPct = Math.min(100, Math.round((selfMultiplier / maxScale) * 100));
                   return (
                     <article className="card stack" key={group.id}>
                       <div className="section-heading">
                         <h2>{displayCategoryName(group.name)}</h2>
                         {isDefaultCategory(group) ? <span className="pill">Default</span> : null}
                       </div>
+                      <div className="edit-multiplier-row">
+                        <span className="edit-multiplier-name">📁 {displayCategoryName(group.name)}</span>
+                        <div
+                          className="edit-multiplier-track"
+                          onPointerDown={(e) => {
+                            e.currentTarget.setPointerCapture(e.pointerId);
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const val = Math.max(0, Math.round(((e.clientX - rect.left) / rect.width) * maxScale * 10) / 10);
+                            setDragMultipliers((m) => ({ ...m, [selfDragKey]: val }));
+                          }}
+                          onPointerMove={(e) => {
+                            if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const val = Math.max(0, Math.round(((e.clientX - rect.left) / rect.width) * maxScale * 10) / 10);
+                            setDragMultipliers((m) => ({ ...m, [selfDragKey]: val }));
+                          }}
+                          onPointerUp={(e) => {
+                            if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                            e.currentTarget.releasePointerCapture(e.pointerId);
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const val = Math.max(0, Math.round(((e.clientX - rect.left) / rect.width) * maxScale * 10) / 10);
+                            void saveCategoryMultiplier(group.id, val);
+                          }}
+                          onPointerCancel={() => {
+                            setDragMultipliers((m) => { const next = { ...m }; delete next[selfDragKey]; return next; });
+                          }}
+                        >
+                          <div className="edit-multiplier-fill" style={{ width: `${selfPct}%` }} />
+                        </div>
+                        <input
+                          className="edit-multiplier-value no-spin"
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          value={dragMultipliers[selfDragKey] !== undefined ? selfMultiplier.toFixed(1) : selfMultiplier}
+                          onChange={(e) => {
+                            setDragMultipliers((m) => ({ ...m, [selfDragKey]: Number(e.target.value) }));
+                          }}
+                          onBlur={(e) => {
+                            const val = Math.max(0, Math.round(Number(e.target.value) * 10) / 10);
+                            void saveCategoryMultiplier(group.id, val);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') e.currentTarget.blur();
+                            if (e.key === 'Escape') {
+                              setDragMultipliers((m) => { const next = { ...m }; delete next[selfDragKey]; return next; });
+                              e.currentTarget.blur();
+                            }
+                          }}
+                        />
+                      </div>
                       {sorted.length === 0 ? (
                         <p className="empty">No activities in this category yet.</p>
                       ) : (
                         <div className="item-list">
                           {sorted.map((activity) => {
-                            const activeMultiplier = dragMultipliers[activity.id] ?? Number(activity.multiplier ?? 1);
+                            const dragKey = `${activity.type}-${activity.id}`;
+                            const activeMultiplier = dragMultipliers[dragKey] ?? Number(activity.multiplier ?? 1);
                             const pct = Math.min(100, Math.round((activeMultiplier / maxScale) * 100));
                             return (
-                              <div className="edit-multiplier-row" key={activity.id}>
-                                <span className="edit-multiplier-name">{activity.name}</span>
+                              <div className="edit-multiplier-row" key={dragKey}>
+                                <span className="edit-multiplier-name">
+                                  {activity.type === 'category' ? '📁 ' : '📄 '}
+                                  {activity.name}
+                                </span>
                                 <div
                                   className="edit-multiplier-track"
                                   onPointerDown={(e) => {
                                     e.currentTarget.setPointerCapture(e.pointerId);
                                     const rect = e.currentTarget.getBoundingClientRect();
                                     const val = Math.max(0, Math.round(((e.clientX - rect.left) / rect.width) * maxScale * 10) / 10);
-                                    setDragMultipliers((m) => ({ ...m, [activity.id]: val }));
+                                    setDragMultipliers((m) => ({ ...m, [dragKey]: val }));
                                   }}
                                   onPointerMove={(e) => {
                                     if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
                                     const rect = e.currentTarget.getBoundingClientRect();
                                     const val = Math.max(0, Math.round(((e.clientX - rect.left) / rect.width) * maxScale * 10) / 10);
-                                    setDragMultipliers((m) => ({ ...m, [activity.id]: val }));
+                                    setDragMultipliers((m) => ({ ...m, [dragKey]: val }));
                                   }}
                                   onPointerUp={(e) => {
                                     if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
                                     e.currentTarget.releasePointerCapture(e.pointerId);
                                     const rect = e.currentTarget.getBoundingClientRect();
                                     const val = Math.max(0, Math.round(((e.clientX - rect.left) / rect.width) * maxScale * 10) / 10);
-                                    void saveMultiplier(activity.id, val);
+                                    if (activity.type === 'category') {
+                                      void saveCategoryMultiplier(activity.id, val);
+                                    } else {
+                                      void saveMultiplier(activity.id, val);
+                                    }
                                   }}
                                   onPointerCancel={(e) => {
-                                    setDragMultipliers((m) => { const next = { ...m }; delete next[activity.id]; return next; });
+                                    setDragMultipliers((m) => { const next = { ...m }; delete next[dragKey]; return next; });
                                   }}
                                 >
                                   <div className="edit-multiplier-fill" style={{ width: `${pct}%` }} />
@@ -1672,18 +1836,22 @@ export default function App() {
                                   type="number"
                                   min="0"
                                   step="0.1"
-                                  value={dragMultipliers[activity.id] !== undefined ? activeMultiplier.toFixed(1) : activeMultiplier}
+                                  value={dragMultipliers[dragKey] !== undefined ? activeMultiplier.toFixed(1) : activeMultiplier}
                                   onChange={(e) => {
-                                    setDragMultipliers((m) => ({ ...m, [activity.id]: Number(e.target.value) }));
+                                    setDragMultipliers((m) => ({ ...m, [dragKey]: Number(e.target.value) }));
                                   }}
                                   onBlur={(e) => {
                                     const val = Math.max(0, Math.round(Number(e.target.value) * 10) / 10);
-                                    void saveMultiplier(activity.id, val);
+                                    if (activity.type === 'category') {
+                                      void saveCategoryMultiplier(activity.id, val);
+                                    } else {
+                                      void saveMultiplier(activity.id, val);
+                                    }
                                   }}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') e.currentTarget.blur();
                                     if (e.key === 'Escape') {
-                                      setDragMultipliers((m) => { const next = { ...m }; delete next[activity.id]; return next; });
+                                      setDragMultipliers((m) => { const next = { ...m }; delete next[dragKey]; return next; });
                                       e.currentTarget.blur();
                                     }
                                   }}
@@ -1834,11 +2002,17 @@ export default function App() {
               <button className="primary-button" type="button" onClick={() => void handleSaveLibrarySettings()}>
                 Save
               </button>
-              {!(librarySettingsTarget.type === 'category' && isDefaultCategory(librarySettingsTarget.item)) ? (
-                <button className="destructive-button" type="button" onClick={() => void handleDeleteLibraryTarget()}>
-                  Delete
-                </button>
-              ) : null}
+              <button
+                className="destructive-button"
+                type="button"
+                onClick={() => void handleDeleteLibraryTarget()}
+                disabled={librarySettingsTarget.type === 'category' && isDefaultCategory(librarySettingsTarget.item)}
+                title={librarySettingsTarget.type === 'category' && isDefaultCategory(librarySettingsTarget.item)
+                  ? 'Root category cannot be deleted'
+                  : ''}
+              >
+                {librarySettingsTarget.type === 'category' ? 'Delete category' : 'Delete activity'}
+              </button>
               <button type="button" onClick={closeLibrarySettings}>Cancel</button>
             </div>
           </div>
@@ -1881,6 +2055,37 @@ export default function App() {
               <button type="button" onClick={closeLibraryCreate}>Cancel</button>
             </div>
           </form>
+        </div>
+      ) : null}
+
+      {deleteConfirmTarget ? (
+        <div
+          className="library-settings-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={cancelDeleteLibraryTarget}
+        >
+          <div className="library-settings-modal card stack" onClick={(event) => event.stopPropagation()}>
+            <div className="section-heading">
+              <h2>Confirm delete</h2>
+              <button type="button" onClick={cancelDeleteLibraryTarget} aria-label="Close confirmation">
+                ✕
+              </button>
+            </div>
+
+            <p className="muted-text">
+              {deleteConfirmTarget.type === 'category'
+                ? `Delete category "${deleteConfirmTarget.item.name}" and everything inside it?`
+                : `Delete activity "${deleteConfirmTarget.item.name}"?`}
+            </p>
+
+            <div className="row gap wrap-row">
+              <button className="destructive-button" type="button" onClick={() => void confirmDeleteLibraryTarget()}>
+                {deleteConfirmTarget.type === 'category' ? 'Delete category' : 'Delete activity'}
+              </button>
+              <button type="button" onClick={cancelDeleteLibraryTarget}>Cancel</button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
