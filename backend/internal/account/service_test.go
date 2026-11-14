@@ -5,8 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/schellhas/idletime/backend/internal/activity"
 	"github.com/schellhas/idletime/backend/internal/category"
 	"github.com/schellhas/idletime/backend/internal/password"
+	"github.com/schellhas/idletime/backend/internal/timeentry"
 	"github.com/schellhas/idletime/backend/internal/user"
 	"github.com/schellhas/idletime/backend/internal/validation"
 )
@@ -46,6 +48,14 @@ type fakeCategories struct{ list []category.Category }
 
 func (f fakeCategories) List(context.Context, int64) ([]category.Category, error) { return f.list, nil }
 
+type fakeActivities struct{}
+
+func (fakeActivities) List(context.Context, int64) ([]activity.Activity, error) { return nil, nil }
+
+type fakeEntries struct{}
+
+func (fakeEntries) ListAll(context.Context, int64) ([]timeentry.Entry, error) { return nil, nil }
+
 func newService(t *testing.T) (*Service, *fakeUsers, *fakeSessions) {
 	t.Helper()
 	hash, err := password.Hash(currentPassword)
@@ -54,7 +64,7 @@ func newService(t *testing.T) (*Service, *fakeUsers, *fakeSessions) {
 	}
 	users := &fakeUsers{record: user.Record{User: user.User{ID: 1, Username: "alice"}, PasswordHash: hash}}
 	sessions := &fakeSessions{}
-	return NewService(users, sessions, fakeCategories{}), users, sessions
+	return NewService(users, sessions, fakeCategories{}, fakeActivities{}, fakeEntries{}), users, sessions
 }
 
 func TestUpdateUsername(t *testing.T) {
@@ -117,14 +127,14 @@ func TestDelete(t *testing.T) {
 	}
 }
 
-func TestExportReturnsEmptyListNotNull(t *testing.T) {
+func TestExportReturnsEmptyListsNotNull(t *testing.T) {
 	svc, users, _ := newService(t)
 
 	data, err := svc.Export(context.Background(), users.record.User)
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
-	if data.Categories == nil {
-		t.Error("categories must be an empty slice so it serialises as []")
+	if data.Categories == nil || data.Activities == nil || data.TimeEntries == nil {
+		t.Error("lists must be empty slices so they serialise as []")
 	}
 }

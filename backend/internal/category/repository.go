@@ -45,17 +45,40 @@ func (r *PostgresRepository) List(ctx context.Context, userID int64) ([]Category
 // Create inserts c and returns the stored row. The composite foreign key on
 // (parent_id, user_id) rejects parents that belong to another user.
 func (r *PostgresRepository) Create(ctx context.Context, c Category) (Category, error) {
-	rows, err := r.pool.Query(ctx,
+	return r.write(ctx,
 		"INSERT INTO categories (user_id, parent_id, name, multiplier) VALUES ($1, $2, $3, $4) RETURNING "+categoryColumns,
 		c.UserID, c.ParentID, c.Name, c.Multiplier)
+}
+
+// Update stores the mutable fields of c and returns the stored row.
+func (r *PostgresRepository) Update(ctx context.Context, c Category) (Category, error) {
+	return r.write(ctx,
+		"UPDATE categories SET parent_id = $3, name = $4, multiplier = $5 WHERE id = $1 AND user_id = $2 RETURNING "+categoryColumns,
+		c.ID, c.UserID, c.ParentID, c.Name, c.Multiplier)
+}
+
+// Delete removes a category; subcategories and activities follow through cascading keys.
+func (r *PostgresRepository) Delete(ctx context.Context, userID, id int64) error {
+	tag, err := r.pool.Exec(ctx, "DELETE FROM categories WHERE id = $1 AND user_id = $2", id, userID)
 	if err != nil {
-		return Category{}, mapInsertError(err)
+		return fmt.Errorf("delete category: %w", err)
 	}
-	created, err := pgx.CollectOneRow(rows, scanCategory)
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PostgresRepository) write(ctx context.Context, query string, args ...any) (Category, error) {
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
-		return Category{}, mapInsertError(err)
+		return Category{}, mapWriteError(err)
 	}
-	return created, nil
+	c, err := pgx.CollectOneRow(rows, scanCategory)
+	if err != nil {
+		return Category{}, mapWriteError(err)
+	}
+	return c, nil
 }
 
 func scanCategory(row pgx.CollectableRow) (Category, error) {
@@ -64,7 +87,10 @@ func scanCategory(row pgx.CollectableRow) (Category, error) {
 	return c, err
 }
 
-func mapInsertError(err error) error {
+func mapWriteError(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
@@ -74,5 +100,5 @@ func mapInsertError(err error) error {
 			return ErrDuplicateName
 		}
 	}
-	return fmt.Errorf("insert category: %w", err)
+	return fmt.Errorf("write category: %w", err)
 }

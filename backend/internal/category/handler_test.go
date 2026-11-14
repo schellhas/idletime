@@ -75,6 +75,37 @@ func TestHandlerCreate(t *testing.T) {
 	}
 }
 
+func TestHandlerUpdateAndDelete(t *testing.T) {
+	repo := &fakeRepository{rows: []Category{{ID: 1, UserID: 1, Name: "Sports", Multiplier: 1}}}
+	mux := newTestMux(repo)
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       string
+		wantStatus int
+	}{
+		{name: "rename", method: http.MethodPatch, path: "/api/v1/categories/1", body: `{"name":"Fitness"}`, wantStatus: http.StatusOK},
+		{name: "move to top level", method: http.MethodPatch, path: "/api/v1/categories/1", body: `{"parentId":null}`, wantStatus: http.StatusOK},
+		{name: "unknown category", method: http.MethodPatch, path: "/api/v1/categories/9", body: `{"name":"x"}`, wantStatus: http.StatusNotFound},
+		{name: "bad id", method: http.MethodPatch, path: "/api/v1/categories/abc", body: `{}`, wantStatus: http.StatusBadRequest},
+		{name: "unknown field", method: http.MethodPatch, path: "/api/v1/categories/1", body: `{"foo":1}`, wantStatus: http.StatusBadRequest},
+		{name: "delete unknown", method: http.MethodDelete, path: "/api/v1/categories/9", wantStatus: http.StatusNotFound},
+		{name: "delete", method: http.MethodDelete, path: "/api/v1/categories/1", wantStatus: http.StatusNoContent},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body)))
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body)
+			}
+		})
+	}
+}
+
 func TestHandlerHidesOwnerID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/categories", strings.NewReader(`{"name":"Sports"}`))

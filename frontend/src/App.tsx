@@ -8,7 +8,9 @@ import { RegisterPage } from "./features/auth/RegisterPage";
 import { ResetPasswordPage } from "./features/auth/ResetPasswordPage";
 import { PublicOnly, RequireAuth } from "./features/auth/RouteGuards";
 import { VerifyEmailPage } from "./features/auth/VerifyEmailPage";
-import { CategoriesPage } from "./features/categories/CategoriesPage";
+import { LibraryPage } from "./features/library/LibraryPage";
+import { NowPage } from "./features/now/NowPage";
+import { StatsPage } from "./features/stats/StatsPage";
 import { AppShell } from "./layout/AppShell";
 
 export function App() {
@@ -18,7 +20,9 @@ export function App() {
         <Routes>
           <Route element={<AppShell />}>
             <Route element={<RequireAuth />}>
-              <Route index element={<CategoriesPage />} />
+              <Route index element={<NowPage />} />
+              <Route path="library" element={<LibraryPage />} />
+              <Route path="stats" element={<StatsPage />} />
               <Route path="account" element={<AccountPage />} />
             </Route>
 

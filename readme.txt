@@ -75,6 +75,23 @@ Run the parts locally for development:
     make backend-run   # API on :8080 (needs DATABASE_URL from .env.example)
     make frontend-dev  # Vite dev server on :3000, proxies /api to the backend
 
+The app
+~~~~~~~
+
+* Now: tell it how much time you have and it suggests what to do. "Start timer" times the
+  activity on the server (a running timer survives reloads and works across devices),
+  "Skip" suggests the next one, "Log time" adds time after the fact.
+* Library: manage categories (nestable) and activities with their multipliers and minimum time.
+* Progress: time per day, and target vs. actual share for every category and activity.
+
+How the suggestion works: every category and activity has a multiplier, its weight among
+its siblings (the subcategories and activities directly below the same category). The
+time share it should get is its weight divided by the sum of its siblings' weights,
+multiplied down the tree. So a category with x2 gets twice the time of a sibling with x1,
+no matter how many activities it contains. The app descends from the top and always picks
+the sibling with the least tracked time relative to its weight; ties go to the heavier
+weight. Activities whose minimum time does not fit the slot, and skipped ones, are ignored.
+
 User accounts
 ~~~~~~~~~~~~~
 
@@ -91,6 +108,7 @@ and COOKIE_SECURE=true (see .env.example).
 
 Run the tests:
 
-    make test
+    make test   # unit tests (backend runs in Go, frontend in Vitest)
+    make e2e    # end-to-end checks against the running stack (after make up)
 
 Run "make help" to list all targets.

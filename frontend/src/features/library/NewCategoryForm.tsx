@@ -5,13 +5,14 @@ import type { Category, NewCategory } from "../../api/categories";
 import { useAsyncAction } from "../../hooks/useAsyncAction";
 import { Field } from "../../ui/Field";
 import { Message } from "../../ui/Message";
+import { categoryOptions } from "./libraryTree";
 
-interface CategoryFormProps {
+interface NewCategoryFormProps {
   categories: Category[];
   onSubmit: (input: NewCategory) => Promise<void>;
 }
 
-export function CategoryForm({ categories, onSubmit }: CategoryFormProps) {
+export function NewCategoryForm({ categories, onSubmit }: NewCategoryFormProps) {
   const [name, setName] = useState("");
   const [multiplier, setMultiplier] = useState("1");
   const [parentId, setParentId] = useState("");
@@ -20,11 +21,7 @@ export function CategoryForm({ categories, onSubmit }: CategoryFormProps) {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const saved = await run(() =>
-      onSubmit({
-        name,
-        multiplier: Number(multiplier),
-        parentId: parentId === "" ? null : Number(parentId),
-      }),
+      onSubmit({ name, multiplier: Number(multiplier), parentId: parentId === "" ? null : Number(parentId) }),
     );
     if (saved) {
       setName("");
@@ -34,9 +31,7 @@ export function CategoryForm({ categories, onSubmit }: CategoryFormProps) {
   return (
     <form className="card stack" onSubmit={handleSubmit}>
       <h2>New category</h2>
-
       <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required />
-
       <Field
         label="Multiplier"
         type="number"
@@ -45,23 +40,21 @@ export function CategoryForm({ categories, onSubmit }: CategoryFormProps) {
         step="0.01"
         value={multiplier}
         onChange={(e) => setMultiplier(e.target.value)}
+        hint="How much time it should get compared to its siblings."
         required
       />
-
       <label className="field">
         <span>Parent</span>
         <select value={parentId} onChange={(e) => setParentId(e.target.value)}>
           <option value="">None (top level)</option>
-          {categories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.name}
+          {categoryOptions(categories).map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
             </option>
           ))}
         </select>
       </label>
-
       {error && <Message kind="error">{error}</Message>}
-
       <button type="submit" className="button" disabled={pending}>
         {pending ? "Saving…" : "Add category"}
       </button>

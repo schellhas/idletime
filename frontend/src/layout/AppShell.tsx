@@ -2,40 +2,60 @@ import { NavLink, Outlet } from "react-router";
 
 import { useAuth } from "../features/auth/AuthContext";
 
+const MAIN_LINKS = [
+  { to: "/", label: "Now", end: true },
+  { to: "/library", label: "Library", end: false },
+  { to: "/stats", label: "Progress", end: false },
+  { to: "/account", label: "Account", end: false },
+] as const;
+
 export function AppShell() {
-  const { status, user, logout } = useAuth();
+  const { status, logout } = useAuth();
+  const loggedIn = status === "authenticated";
 
   return (
-    <div className="shell">
+    <div className={`shell${loggedIn ? " shell--with-tabbar" : ""}`}>
       <header className="shell__header">
         <NavLink to="/" className="shell__brand">
           idletime
         </NavLink>
 
-        <nav className="nav" aria-label="Main">
-          {status === "authenticated" && user ? (
-            <>
-              <NavLink to="/" end>
-                Library
+        {/* Top navigation: wide screens. */}
+        <nav className="nav nav--top" aria-label="Main">
+          {loggedIn &&
+            MAIN_LINKS.map((link) => (
+              <NavLink key={link.to} to={link.to} end={link.end}>
+                {link.label}
               </NavLink>
-              <NavLink to="/account">{user.username}</NavLink>
-              <button type="button" className="nav__button" onClick={() => void logout()}>
-                Log out
-              </button>
+            ))}
+          {loggedIn && (
+            <button type="button" className="nav__button" onClick={() => void logout()}>
+              Log out
+            </button>
+          )}
+          {status === "anonymous" && (
+            <>
+              <NavLink to="/login">Log in</NavLink>
+              <NavLink to="/register">Sign up</NavLink>
             </>
-          ) : (
-            status === "anonymous" && (
-              <>
-                <NavLink to="/login">Log in</NavLink>
-                <NavLink to="/register">Sign up</NavLink>
-              </>
-            )
           )}
         </nav>
       </header>
+
       <main className="shell__main">
         <Outlet />
       </main>
+
+      {/* Bottom tab bar: phones, where it is within thumb reach. */}
+      {loggedIn && (
+        <nav className="tabbar" aria-label="Main">
+          {MAIN_LINKS.map((link) => (
+            <NavLink key={link.to} to={link.to} end={link.end}>
+              {link.label}
+            </NavLink>
+          ))}
+        </nav>
+      )}
     </div>
   );
 }

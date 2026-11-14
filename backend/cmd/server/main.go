@@ -11,15 +11,20 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata" // IANA time zones for the statistics, as the minimal container image has none
 
 	"github.com/schellhas/idletime/backend/internal/account"
+	"github.com/schellhas/idletime/backend/internal/activity"
 	"github.com/schellhas/idletime/backend/internal/auth"
 	"github.com/schellhas/idletime/backend/internal/category"
 	"github.com/schellhas/idletime/backend/internal/config"
 	"github.com/schellhas/idletime/backend/internal/database"
 	"github.com/schellhas/idletime/backend/internal/mail"
+	"github.com/schellhas/idletime/backend/internal/progress"
 	"github.com/schellhas/idletime/backend/internal/ratelimit"
 	"github.com/schellhas/idletime/backend/internal/server"
+	"github.com/schellhas/idletime/backend/internal/timeentry"
+	"github.com/schellhas/idletime/backend/internal/timer"
 	"github.com/schellhas/idletime/backend/internal/user"
 )
 
@@ -67,6 +72,10 @@ func run(logger *slog.Logger) error {
 	sessions := auth.NewSessionStore(pool)
 	authService := auth.NewService(users, sessions, auth.NewTokenStore(pool), mailer, cfg.AppBaseURL)
 	categoryService := category.NewService(category.NewPostgresRepository(pool))
+	activityService := activity.NewService(activity.NewPostgresRepository(pool))
+	entryService := timeentry.NewService(timeentry.NewPostgresRepository(pool))
+	timerService := timer.NewService(timer.NewPostgresRepository(pool))
+	progressService := progress.NewService(categoryService, activityService, entryService)
 
 	guard := auth.Guard(authService, cfg.CookieSecure)
 	clientIP := func(r *http.Request) string { return ratelimit.ClientIP(r, cfg.TrustProxyHeaders) }
@@ -80,8 +89,12 @@ func run(logger *slog.Logger) error {
 			AllowedOrigin: cfg.AppOrigin(),
 			Routes: []server.RouteRegistrar{
 				auth.NewHandler(authService, limit, clientIP, cfg.CookieSecure),
-				account.NewHandler(account.NewService(users, sessions, categoryService), guard, cfg.CookieSecure),
+				account.NewHandler(account.NewService(users, sessions, categoryService, activityService, entryService), guard, cfg.CookieSecure),
 				category.NewHandler(categoryService, guard),
+				activity.NewHandler(activityService, guard),
+				timeentry.NewHandler(entryService, guard),
+				timer.NewHandler(timerService, guard),
+				progress.NewHandler(progressService, guard),
 			},
 		}),
 		ReadHeaderTimeout: 5 * time.Second,

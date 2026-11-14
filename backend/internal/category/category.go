@@ -19,6 +19,7 @@ type Category struct {
 
 // Domain errors returned by the service and repository.
 var (
+	ErrNotFound       = errors.New("category not found")
 	ErrParentNotFound = errors.New("parent category not found")
 	ErrDuplicateName  = errors.New("category name already exists in this parent")
 )

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/schellhas/idletime/backend/internal/activity"
 	"github.com/schellhas/idletime/backend/internal/category"
 	"github.com/schellhas/idletime/backend/internal/password"
+	"github.com/schellhas/idletime/backend/internal/timeentry"
 	"github.com/schellhas/idletime/backend/internal/user"
 )
 
@@ -33,11 +35,23 @@ type CategoryLister interface {
 	List(ctx context.Context, userID int64) ([]category.Category, error)
 }
 
+// ActivityLister provides the user's activities for the data export.
+type ActivityLister interface {
+	List(ctx context.Context, userID int64) ([]activity.Activity, error)
+}
+
+// EntryLister provides all of the user's time entries for the data export.
+type EntryLister interface {
+	ListAll(ctx context.Context, userID int64) ([]timeentry.Entry, error)
+}
+
 // Export is a complete copy of everything stored about a user.
 type Export struct {
-	ExportedAt time.Time           `json:"exportedAt"`
-	User       user.User           `json:"user"`
-	Categories []category.Category `json:"categories"`
+	ExportedAt  time.Time           `json:"exportedAt"`
+	User        user.User           `json:"user"`
+	Categories  []category.Category `json:"categories"`
+	Activities  []activity.Activity `json:"activities"`
+	TimeEntries []timeentry.Entry   `json:"timeEntries"`
 }
 
 // Service contains the account-management use cases.
@@ -45,11 +59,13 @@ type Service struct {
 	users      UserStore
 	sessions   SessionRevoker
 	categories CategoryLister
+	activities ActivityLister
+	entries    EntryLister
 }
 
 // NewService creates a Service.
-func NewService(users UserStore, sessions SessionRevoker, categories CategoryLister) *Service {
-	return &Service{users: users, sessions: sessions, categories: categories}
+func NewService(users UserStore, sessions SessionRevoker, categories CategoryLister, activities ActivityLister, entries EntryLister) *Service {
+	return &Service{users: users, sessions: sessions, categories: categories, activities: activities, entries: entries}
 }
 
 // UpdateUsername changes the user's username.
@@ -104,10 +120,30 @@ func (s *Service) Export(ctx context.Context, u user.User) (Export, error) {
 	if err != nil {
 		return Export{}, fmt.Errorf("export categories: %w", err)
 	}
-	if categories == nil {
-		categories = []category.Category{}
+	activities, err := s.activities.List(ctx, u.ID)
+	if err != nil {
+		return Export{}, fmt.Errorf("export activities: %w", err)
 	}
-	return Export{ExportedAt: time.Now().UTC(), User: u, Categories: categories}, nil
+	entries, err := s.entries.ListAll(ctx, u.ID)
+	if err != nil {
+		return Export{}, fmt.Errorf("export time entries: %w", err)
+	}
+
+	// Empty lists must serialise as [] rather than null.
+	return Export{
+		ExportedAt:  time.Now().UTC(),
+		User:        u,
+		Categories:  orEmpty(categories),
+		Activities:  orEmpty(activities),
+		TimeEntries: orEmpty(entries),
+	}, nil
+}
+
+func orEmpty[T any](list []T) []T {
+	if list == nil {
+		return []T{}
+	}
+	return list
 }
 
 func (s *Service) confirmPassword(ctx context.Context, userID int64, candidate string) error {
