@@ -1,4 +1,4 @@
-import { request } from "./http";
+import { http } from "./http";
 
 export interface Category {
   id: number;
@@ -14,13 +14,6 @@ export interface NewCategory {
   multiplier: number;
 }
 
-export function listCategories(): Promise<Category[]> {
-  return request<Category[]>("/categories");
-}
+export const listCategories = () => http.get<Category[]>("/categories");
 
-export function createCategory(input: NewCategory): Promise<Category> {
-  return request<Category>("/categories", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
+export const createCategory = (input: NewCategory) => http.post<Category>("/categories", input);

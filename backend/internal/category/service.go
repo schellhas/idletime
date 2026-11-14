@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/schellhas/idletime/backend/internal/validation"
 )
 
 const (
@@ -13,8 +15,9 @@ const (
 )
 
 // Repository is the persistence port required by the Service.
+// Every operation is scoped to the owning user.
 type Repository interface {
-	List(ctx context.Context) ([]Category, error)
+	List(ctx context.Context, userID int64) ([]Category, error)
 	Create(ctx context.Context, c Category) (Category, error)
 }
 
@@ -35,20 +38,20 @@ func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// List returns all categories.
-func (s *Service) List(ctx context.Context) ([]Category, error) {
-	categories, err := s.repo.List(ctx)
+// List returns all categories of the user.
+func (s *Service) List(ctx context.Context, userID int64) ([]Category, error) {
+	categories, err := s.repo.List(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list categories: %w", err)
 	}
 	return categories, nil
 }
 
-// Create validates the input and stores a new category.
-func (s *Service) Create(ctx context.Context, in CreateInput) (Category, error) {
+// Create validates the input and stores a new category for the user.
+func (s *Service) Create(ctx context.Context, userID int64, in CreateInput) (Category, error) {
 	name := strings.TrimSpace(in.Name)
 	if name == "" || utf8.RuneCountInString(name) > maxNameLength {
-		return Category{}, fmt.Errorf("%w: name must be 1-%d characters", ErrInvalidInput, maxNameLength)
+		return Category{}, validation.Errorf("name must be 1-%d characters", maxNameLength)
 	}
 
 	multiplier := defaultMultiplier
@@ -56,10 +59,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Category, error) 
 		multiplier = *in.Multiplier
 	}
 	if multiplier <= 0 {
-		return Category{}, fmt.Errorf("%w: multiplier must be greater than 0", ErrInvalidInput)
+		return Category{}, validation.Errorf("multiplier must be greater than 0")
 	}
 
-	created, err := s.repo.Create(ctx, Category{ParentID: in.ParentID, Name: name, Multiplier: multiplier})
+	created, err := s.repo.Create(ctx, Category{UserID: userID, ParentID: in.ParentID, Name: name, Multiplier: multiplier})
 	if err != nil {
 		return Category{}, fmt.Errorf("create category: %w", err)
 	}

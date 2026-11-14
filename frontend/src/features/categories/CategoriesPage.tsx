@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 
+import { Message } from "../../ui/Message";
 import { CategoryForm } from "./CategoryForm";
 import { CategoryList } from "./CategoryList";
 import { buildCategoryTree } from "./categoryTree";
@@ -13,8 +14,8 @@ export function CategoriesPage() {
     <div className="page">
       <section className="card">
         <h2>Categories</h2>
-        {loading && <p className="message">Loading…</p>}
-        {error && <p role="alert" className="message message--error">{error}</p>}
+        {loading && <Message>Loading…</Message>}
+        {error && <Message kind="error">{error}</Message>}
         {!loading && !error && <CategoryList nodes={tree} />}
       </section>
 

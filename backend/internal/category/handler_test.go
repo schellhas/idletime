@@ -5,12 +5,33 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/schellhas/idletime/backend/internal/user"
 )
+
+// asUser stands in for the auth guard: it authenticates every request as user 1.
+func asUser(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(user.WithContext(r.Context(), user.User{ID: 1})))
+	})
+}
 
 func newTestMux(repo Repository) *http.ServeMux {
 	mux := http.NewServeMux()
-	NewHandler(NewService(repo)).Register(mux)
+	NewHandler(NewService(repo), asUser).Register(mux)
 	return mux
+}
+
+func TestHandlerRejectsRequestsWithoutAuthenticatedUser(t *testing.T) {
+	mux := http.NewServeMux()
+	NewHandler(NewService(&fakeRepository{}), func(next http.Handler) http.Handler { return next }).Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/categories", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
 }
 
 func TestHandlerListReturnsEmptyArray(t *testing.T) {
@@ -51,5 +72,16 @@ func TestHandlerCreate(t *testing.T) {
 				t.Errorf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body)
 			}
 		})
+	}
+}
+
+func TestHandlerHidesOwnerID(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/categories", strings.NewReader(`{"name":"Sports"}`))
+
+	newTestMux(&fakeRepository{}).ServeHTTP(rec, req)
+
+	if strings.Contains(strings.ToLower(rec.Body.String()), "userid") {
+		t.Errorf("response leaks the owner id: %s", rec.Body)
 	}
 }

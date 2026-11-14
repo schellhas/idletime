@@ -24,9 +24,11 @@ type RouteRegistrar interface {
 
 // Dependencies are the collaborators needed to build the router.
 type Dependencies struct {
-	Logger     *slog.Logger
-	Pinger     Pinger
-	Categories RouteRegistrar
+	Logger *slog.Logger
+	Pinger Pinger
+	Routes []RouteRegistrar
+	// AllowedOrigin is the only browser origin permitted to send state-changing requests.
+	AllowedOrigin string
 }
 
 // NewRouter builds the root handler including middleware.
@@ -34,9 +36,15 @@ func NewRouter(deps Dependencies) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
 	mux.HandleFunc("GET /readyz", readyHandler(deps.Pinger))
-	deps.Categories.Register(mux)
+	for _, routes := range deps.Routes {
+		routes.Register(mux)
+	}
 
-	return recoverer(deps.Logger)(requestLogger(deps.Logger)(mux))
+	var handler http.Handler = mux
+	for _, wrap := range []httpx.Middleware{originCheck(deps.AllowedOrigin), requestLogger(deps.Logger), recoverer(deps.Logger)} {
+		handler = wrap(handler)
+	}
+	return handler
 }
 
 func healthHandler(w http.ResponseWriter, _ *http.Request) {

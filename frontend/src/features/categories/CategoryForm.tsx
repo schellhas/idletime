@@ -2,6 +2,9 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 
 import type { Category, NewCategory } from "../../api/categories";
+import { useAsyncAction } from "../../hooks/useAsyncAction";
+import { Field } from "../../ui/Field";
+import { Message } from "../../ui/Message";
 
 interface CategoryFormProps {
   categories: Category[];
@@ -12,53 +15,38 @@ export function CategoryForm({ categories, onSubmit }: CategoryFormProps) {
   const [name, setName] = useState("");
   const [multiplier, setMultiplier] = useState("1");
   const [parentId, setParentId] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { pending, error, run } = useAsyncAction();
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    try {
-      await onSubmit({
+    const saved = await run(() =>
+      onSubmit({
         name,
         multiplier: Number(multiplier),
         parentId: parentId === "" ? null : Number(parentId),
-      });
+      }),
+    );
+    if (saved) {
       setName("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong.");
-    } finally {
-      setSubmitting(false);
     }
   }
 
   return (
-    <form className="card form" onSubmit={handleSubmit}>
+    <form className="card stack" onSubmit={handleSubmit}>
       <h2>New category</h2>
 
-      <label className="field">
-        <span>Name</span>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          maxLength={100}
-          required
-        />
-      </label>
+      <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required />
 
-      <label className="field">
-        <span>Multiplier</span>
-        <input
-          type="number"
-          inputMode="decimal"
-          min="0.01"
-          step="0.01"
-          value={multiplier}
-          onChange={(e) => setMultiplier(e.target.value)}
-          required
-        />
-      </label>
+      <Field
+        label="Multiplier"
+        type="number"
+        inputMode="decimal"
+        min="0.01"
+        step="0.01"
+        value={multiplier}
+        onChange={(e) => setMultiplier(e.target.value)}
+        required
+      />
 
       <label className="field">
         <span>Parent</span>
@@ -72,10 +60,10 @@ export function CategoryForm({ categories, onSubmit }: CategoryFormProps) {
         </select>
       </label>
 
-      {error && <p role="alert" className="message message--error">{error}</p>}
+      {error && <Message kind="error">{error}</Message>}
 
-      <button type="submit" className="button" disabled={submitting}>
-        {submitting ? "Saving…" : "Add category"}
+      <button type="submit" className="button" disabled={pending}>
+        {pending ? "Saving…" : "Add category"}
       </button>
     </form>
   );

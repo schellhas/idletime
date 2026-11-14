@@ -5,23 +5,26 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/schellhas/idletime/backend/internal/auth"
 	"github.com/schellhas/idletime/backend/internal/httpx"
+	"github.com/schellhas/idletime/backend/internal/validation"
 )
 
-// Handler exposes the category service over HTTP.
+// Handler exposes the category service over HTTP. All routes require a session.
 type Handler struct {
 	service *Service
+	guard   httpx.Middleware
 }
 
-// NewHandler creates a Handler for service.
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+// NewHandler creates a Handler for service. guard authenticates requests.
+func NewHandler(service *Service, guard httpx.Middleware) *Handler {
+	return &Handler{service: service, guard: guard}
 }
 
 // Register mounts the category routes on mux.
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/categories", h.list)
-	mux.HandleFunc("POST /api/v1/categories", h.create)
+	mux.Handle("GET /api/v1/categories", h.guard(http.HandlerFunc(h.list)))
+	mux.Handle("POST /api/v1/categories", h.guard(http.HandlerFunc(h.create)))
 }
 
 type createRequest struct {
@@ -31,7 +34,11 @@ type createRequest struct {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	categories, err := h.service.List(r.Context())
+	u, ok := auth.CurrentUser(w, r)
+	if !ok {
+		return
+	}
+	categories, err := h.service.List(r.Context(), u.ID)
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
@@ -43,13 +50,17 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	u, ok := auth.CurrentUser(w, r)
+	if !ok {
+		return
+	}
 	var req createRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
-	created, err := h.service.Create(r.Context(), CreateInput(req))
+	created, err := h.service.Create(r.Context(), u.ID, CreateInput(req))
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
@@ -59,7 +70,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, ErrInvalidInput):
+	case errors.Is(err, validation.ErrInvalid):
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_input", err.Error())
 	case errors.Is(err, ErrParentNotFound):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "parent_not_found", err.Error())

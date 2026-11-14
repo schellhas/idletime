@@ -2,16 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 
 import { createCategory, listCategories } from "../../api/categories";
 import type { Category, NewCategory } from "../../api/categories";
+import { errorMessage } from "../../api/http";
 
 interface UseCategories {
   categories: Category[];
   loading: boolean;
   error: string | null;
   create: (input: NewCategory) => Promise<void>;
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : "Something went wrong.";
 }
 
 export function useCategories(): UseCategories {
@@ -24,7 +21,7 @@ export function useCategories(): UseCategories {
       setCategories(await listCategories());
       setError(null);
     } catch (e) {
-      setError(messageOf(e));
+      setError(errorMessage(e));
     } finally {
       setLoading(false);
     }

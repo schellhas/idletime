@@ -16,7 +16,7 @@ const (
 	pgUniqueViolation     = "23505"
 )
 
-const categoryColumns = "id, parent_id, name, multiplier::float8, created_at"
+const categoryColumns = "id, user_id, parent_id, name, multiplier::float8, created_at"
 
 // PostgresRepository stores categories in PostgreSQL.
 type PostgresRepository struct {
@@ -28,9 +28,10 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-// List returns all categories ordered by name.
-func (r *PostgresRepository) List(ctx context.Context) ([]Category, error) {
-	rows, err := r.pool.Query(ctx, "SELECT "+categoryColumns+" FROM categories ORDER BY LOWER(name), id")
+// List returns the user's categories ordered by name.
+func (r *PostgresRepository) List(ctx context.Context, userID int64) ([]Category, error) {
+	rows, err := r.pool.Query(ctx,
+		"SELECT "+categoryColumns+" FROM categories WHERE user_id = $1 ORDER BY LOWER(name), id", userID)
 	if err != nil {
 		return nil, fmt.Errorf("query categories: %w", err)
 	}
@@ -41,11 +42,12 @@ func (r *PostgresRepository) List(ctx context.Context) ([]Category, error) {
 	return categories, nil
 }
 
-// Create inserts c and returns the stored row.
+// Create inserts c and returns the stored row. The composite foreign key on
+// (parent_id, user_id) rejects parents that belong to another user.
 func (r *PostgresRepository) Create(ctx context.Context, c Category) (Category, error) {
 	rows, err := r.pool.Query(ctx,
-		"INSERT INTO categories (parent_id, name, multiplier) VALUES ($1, $2, $3) RETURNING "+categoryColumns,
-		c.ParentID, c.Name, c.Multiplier)
+		"INSERT INTO categories (user_id, parent_id, name, multiplier) VALUES ($1, $2, $3, $4) RETURNING "+categoryColumns,
+		c.UserID, c.ParentID, c.Name, c.Multiplier)
 	if err != nil {
 		return Category{}, mapInsertError(err)
 	}
@@ -58,7 +60,7 @@ func (r *PostgresRepository) Create(ctx context.Context, c Category) (Category, 
 
 func scanCategory(row pgx.CollectableRow) (Category, error) {
 	var c Category
-	err := row.Scan(&c.ID, &c.ParentID, &c.Name, &c.Multiplier, &c.CreatedAt)
+	err := row.Scan(&c.ID, &c.UserID, &c.ParentID, &c.Name, &c.Multiplier, &c.CreatedAt)
 	return c, err
 }
 

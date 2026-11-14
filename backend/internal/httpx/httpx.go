@@ -10,6 +10,9 @@ import (
 
 const maxBodyBytes = 1 << 20 // 1 MiB
 
+// Middleware wraps an http.Handler with additional behaviour.
+type Middleware func(http.Handler) http.Handler
+
 // ErrorBody is the JSON envelope for every error response.
 type ErrorBody struct {
 	Error ErrorDetail `json:"error"`

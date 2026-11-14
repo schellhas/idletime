@@ -15,16 +15,30 @@ services:
       timeout: 3s
       retries: 10
 
+  # Development mailbox: catches every email the backend sends. Open the web UI to read them.
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "127.0.0.1:${MAILPIT_PORT:-8025}:8025"
+
   backend:
     build: ./backend
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-idletime}:${POSTGRES_PASSWORD:-idletime}@db:5432/${POSTGRES_DB:-idletime}?sslmode=disable
       HTTP_ADDR: ":8080"
+      APP_BASE_URL: http://localhost:${WEB_PORT:-3000}
+      COOKIE_SECURE: "false" # set to true when served over HTTPS
+      TRUST_PROXY_HEADERS: "true" # the nginx container in front sets X-Real-IP
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_FROM: idletime <no-reply@idletime.local>
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     depends_on:
       db:
         condition: service_healthy
+      mailpit:
+        condition: service_started
 
   web:
     build: ./frontend

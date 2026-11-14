@@ -12,13 +12,24 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/schellhas/idletime/backend/internal/account"
+	"github.com/schellhas/idletime/backend/internal/auth"
 	"github.com/schellhas/idletime/backend/internal/category"
 	"github.com/schellhas/idletime/backend/internal/config"
 	"github.com/schellhas/idletime/backend/internal/database"
+	"github.com/schellhas/idletime/backend/internal/mail"
+	"github.com/schellhas/idletime/backend/internal/ratelimit"
 	"github.com/schellhas/idletime/backend/internal/server"
+	"github.com/schellhas/idletime/backend/internal/user"
 )
 
-const shutdownTimeout = 10 * time.Second
+const (
+	shutdownTimeout = 10 * time.Second
+
+	// Sensitive auth endpoints allow this many requests per client and window.
+	authRateLimit  = 10
+	authRateWindow = time.Minute
+)
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -47,14 +58,31 @@ func run(logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
+	mailer, err := newMailer(cfg, logger)
+	if err != nil {
+		return err
+	}
+
+	users := user.NewRepository(pool)
+	sessions := auth.NewSessionStore(pool)
+	authService := auth.NewService(users, sessions, auth.NewTokenStore(pool), mailer, cfg.AppBaseURL)
 	categoryService := category.NewService(category.NewPostgresRepository(pool))
+
+	guard := auth.Guard(authService, cfg.CookieSecure)
+	clientIP := func(r *http.Request) string { return ratelimit.ClientIP(r, cfg.TrustProxyHeaders) }
+	limit := ratelimit.Middleware(ratelimit.New(authRateLimit, authRateWindow), clientIP)
 
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: server.NewRouter(server.Dependencies{
-			Logger:     logger,
-			Pinger:     pool,
-			Categories: category.NewHandler(categoryService),
+			Logger:        logger,
+			Pinger:        pool,
+			AllowedOrigin: cfg.AppOrigin(),
+			Routes: []server.RouteRegistrar{
+				auth.NewHandler(authService, limit, clientIP, cfg.CookieSecure),
+				account.NewHandler(account.NewService(users, sessions, categoryService), guard, cfg.CookieSecure),
+				category.NewHandler(categoryService, guard),
+			},
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -84,4 +112,17 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
 	return nil
+}
+
+// newMailer sends real emails when SMTP is configured and otherwise logs them.
+func newMailer(cfg config.Config, logger *slog.Logger) (mail.Sender, error) {
+	if cfg.SMTP.Host == "" {
+		logger.Warn("SMTP_HOST is not set: emails are logged instead of sent")
+		return mail.NewLogSender(logger), nil
+	}
+	sender, err := mail.NewSMTPSender(cfg.SMTP)
+	if err != nil {
+		return nil, fmt.Errorf("configure SMTP: %w", err)
+	}
+	return sender, nil
 }

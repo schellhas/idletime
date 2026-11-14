@@ -75,6 +75,20 @@ Run the parts locally for development:
     make backend-run   # API on :8080 (needs DATABASE_URL from .env.example)
     make frontend-dev  # Vite dev server on :3000, proxies /api to the backend
 
+User accounts
+~~~~~~~~~~~~~
+
+* Sign up with username, email and password; the account is activated through a link sent by email.
+* Log in with username or email. Sessions use an HttpOnly cookie and last 14 days.
+* Forgot your password? Request a reset link by email.
+* The account page lets you change your username and password, download all your data as JSON
+  and delete your account (all data is removed).
+* Every user only sees their own data; ownership is enforced in the database.
+
+In development every email lands in a local mailbox (Mailpit): http://localhost:8025
+Without SMTP_HOST the backend only logs emails. For production set SMTP_*, APP_BASE_URL
+and COOKIE_SECURE=true (see .env.example).
+
 Run the tests:
 
     make test

@@ -1,5 +1,5 @@
 // Package category implements the category domain: model, business rules,
-// persistence and HTTP transport.
+// persistence and HTTP transport. Categories are private to their owner.
 package category
 
 import (
@@ -10,6 +10,7 @@ import (
 // Category groups activities and can be nested inside another category.
 type Category struct {
 	ID         int64     `json:"id"`
+	UserID     int64     `json:"-"`
 	ParentID   *int64    `json:"parentId"`
 	Name       string    `json:"name"`
 	Multiplier float64   `json:"multiplier"`
@@ -18,7 +19,6 @@ type Category struct {
 
 // Domain errors returned by the service and repository.
 var (
-	ErrInvalidInput   = errors.New("invalid input")
 	ErrParentNotFound = errors.New("parent category not found")
 	ErrDuplicateName  = errors.New("category name already exists in this parent")
 )
