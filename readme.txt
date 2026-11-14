@@ -52,3 +52,31 @@ Now I can start a timer, and after I stop it, the app will automatically add thi
 Now, I do not know whether I want to do Sports, Self-Care, or Languages. Which is why earlier, I assigned each of these categories a multiplier as well. I assigned a 2.0 multiplier to Sports, a 1.0 multiplier to Self-Care, and a 0.3 multiplier to Languages. This way I do three times as much self-care as I learn languages, and twice as much sports as I do self-care.
 
 Now I can tell the app to give me an activity out of all of these categories. It will then give me an activity.
+
+Development
+-----------
+
+Tech stack: PostgreSQL, Go (backend), React + TypeScript + Vite (frontend).
+idletime is a web app with a single responsive web interface for desktop and mobile.
+
+Layout:
+
+* backend/   Go REST API (net/http, pgx, goose migrations)
+* frontend/  React single-page app (Vite)
+
+Run everything with Docker (app on http://localhost:3000):
+
+    cp .env.example .env
+    make up
+
+Run the parts locally for development:
+
+    make db            # PostgreSQL via Docker
+    make backend-run   # API on :8080 (needs DATABASE_URL from .env.example)
+    make frontend-dev  # Vite dev server on :3000, proxies /api to the backend
+
+Run the tests:
+
+    make test
+
+Run "make help" to list all targets.
