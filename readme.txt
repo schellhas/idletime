@@ -106,6 +106,12 @@ In development every email lands in a local mailbox (Mailpit): http://localhost:
 Without SMTP_HOST the backend only logs emails. For production set SMTP_*, APP_BASE_URL
 and COOKIE_SECURE=true (see .env.example).
 
+Try it out quickly (development only):
+
+    ./temp_test_data.sh    # creates the user "a" (password "123") with example data
+
+Run it again at any time to reset that user to the same data.
+
 Run the tests:
 
     make test   # unit tests (backend runs in Go, frontend in Vitest)
