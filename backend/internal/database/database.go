@@ -36,7 +36,7 @@ func Migrate(ctx context.Context, databaseURL string) error {
 	}
 	defer db.Close()
 
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, mustSub())
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, Migrations())
 	if err != nil {
 		return fmt.Errorf("create migration provider: %w", err)
 	}

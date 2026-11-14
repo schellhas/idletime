@@ -116,7 +116,17 @@ Run it again at any time to reset that user to the same data.
 
 Run the tests:
 
-    make test   # unit tests (backend runs in Go, frontend in Vitest)
-    make e2e    # end-to-end checks against the running stack (after make up)
+    make test              # unit tests (backend in Go, frontend in Vitest)
+    make test-integration  # all backend tests incl. database tests; needs only Docker
+    make e2e               # end-to-end checks against the running stack (after make up)
+
+The database tests (backend/internal/integration) run against a real PostgreSQL, each in its
+own throwaway database. They need TEST_DATABASE_URL and are skipped without it, so a plain
+"go test ./..." works too. "make test-integration" starts PostgreSQL and the Go toolchain in
+containers for you.
+
+Continuous integration (.github/workflows/ci.yml) runs on every push to main and on pull
+requests: backend (gofmt, vet, tests with the race detector and a PostgreSQL service),
+frontend (typecheck, tests, build) and the end-to-end checks against the full Docker stack.
 
 Run "make help" to list all targets.

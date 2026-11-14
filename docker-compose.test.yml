@@ -1,0 +1,34 @@
+# Runs the complete backend test suite, including the database integration tests, in
+# containers: no Go toolchain or database needs to be installed. Use `make test-integration`.
+name: idletime-test
+
+services:
+  db-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: postgres
+    tmpfs:
+      - /var/lib/postgresql/data # throwaway and fast
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  backend-tests:
+    image: golang:1.26-alpine
+    working_dir: /src
+    volumes:
+      - ./backend:/src
+      - go-mod-cache:/go/pkg/mod
+    environment:
+      TEST_DATABASE_URL: postgres://test:test@db-test:5432/postgres?sslmode=disable
+    command: go test -count=1 ./...
+    depends_on:
+      db-test:
+        condition: service_healthy
+
+volumes:
+  go-mod-cache:
