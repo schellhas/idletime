@@ -36,7 +36,8 @@ type Repository interface {
 	Update(ctx context.Context, e Entry) (Entry, error)
 	Delete(ctx context.Context, userID, id int64) error
 	List(ctx context.Context, userID int64, f ListFilter) ([]Entry, error)
-	MinutesPerDay(ctx context.Context, userID int64, timeZone string, since time.Time) ([]DayMinutes, error)
+	// MinutesPerDay sums minutes per day; a nil activityIDs means all activities.
+	MinutesPerDay(ctx context.Context, userID int64, timeZone string, since time.Time, activityIDs []int64) ([]DayMinutes, error)
 }
 
 // CreateInput carries the user-supplied fields of a new entry.
@@ -141,9 +142,10 @@ func (s *Service) ListAll(ctx context.Context, userID int64) ([]Entry, error) {
 }
 
 // MinutesPerDay sums the user's logged time per calendar day since the given instant.
-// Days are cut in the given IANA time zone (e.g. "Europe/Berlin").
-func (s *Service) MinutesPerDay(ctx context.Context, userID int64, timeZone string, since time.Time) ([]DayMinutes, error) {
-	days, err := s.repo.MinutesPerDay(ctx, userID, timeZone, since)
+// Days are cut in the given IANA time zone (e.g. "Europe/Berlin"). A nil activityIDs counts
+// every activity; otherwise only the listed ones.
+func (s *Service) MinutesPerDay(ctx context.Context, userID int64, timeZone string, since time.Time, activityIDs []int64) ([]DayMinutes, error) {
+	days, err := s.repo.MinutesPerDay(ctx, userID, timeZone, since, activityIDs)
 	if err != nil {
 		return nil, fmt.Errorf("minutes per day: %w", err)
 	}

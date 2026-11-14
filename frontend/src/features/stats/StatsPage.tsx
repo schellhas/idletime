@@ -4,6 +4,8 @@ import { Message } from "../../ui/Message";
 import { useLibrary } from "../library/useLibrary";
 import { DailyChart } from "./DailyChart";
 import { RecentEntries } from "./RecentEntries";
+import { ScopeSelect, scopeLabel } from "./ScopeSelect";
+import type { ScopeKey } from "./scope";
 import { ShareChart } from "./ShareChart";
 import { SummaryTiles } from "./SummaryTiles";
 import { useStats } from "./useStats";
@@ -13,8 +15,10 @@ const DEFAULT_PERIOD = 30;
 
 export function StatsPage() {
   const [days, setDays] = useState<number>(DEFAULT_PERIOD);
-  const { stats, loading, error, reload } = useStats(days);
+  const [scope, setScope] = useState<ScopeKey>("");
+  const { stats, loading, error, reload } = useStats(days, scope);
   const library = useLibrary();
+  const scopeName = scopeLabel(scope, library.categories, library.activities);
   const [version, setVersion] = useState(0);
 
   function changed() {
@@ -42,15 +46,17 @@ export function StatsPage() {
         </div>
       </div>
 
+      <ScopeSelect value={scope} categories={library.categories} activities={library.activities} onChange={setScope} />
+
       {error && <Message kind="error">{error}</Message>}
       {loading && !stats && <Message>Loading…</Message>}
 
       {stats && (
         <>
-          <SummaryTiles stats={stats} />
+          <SummaryTiles stats={stats} scopeName={scopeName} />
 
           <section className="card stack">
-            <h2>Time per day</h2>
+            <h2>{scopeName ? `Time per day · ${scopeName}` : "Time per day"}</h2>
             <DailyChart daily={stats.daily} />
           </section>
 

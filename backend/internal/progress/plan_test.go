@@ -226,3 +226,62 @@ func TestSharesWithoutTrackedTimeHaveZeroActualShare(t *testing.T) {
 		}
 	}
 }
+
+func TestActivityIDs(t *testing.T) {
+	// Life -> Sports -> Swimming, Gym; Life -> Care -> Reading; Empty has no activities.
+	p := NewPlan(
+		[]category.Category{cat(1, "Life", 1, 0), cat(2, "Sports", 1, 1), cat(3, "Care", 1, 1), cat(4, "Empty", 1, 0)},
+		[]activity.Activity{act(10, "Swimming", 2, 1, 0, 0), act(11, "Gym", 2, 1, 0, 0), act(20, "Reading", 3, 1, 0, 0)},
+	)
+	id := func(v int64) *int64 { return &v }
+
+	tests := []struct {
+		name    string
+		scope   Scope
+		want    []int64
+		wantNil bool
+		wantErr error
+	}{
+		{name: "no scope", wantNil: true},
+		{name: "a category with everything below it", scope: Scope{CategoryID: id(1)}, want: []int64{10, 11, 20}},
+		{name: "a subcategory", scope: Scope{CategoryID: id(3)}, want: []int64{20}},
+		{name: "a category without activities", scope: Scope{CategoryID: id(4)}, want: []int64{}},
+		{name: "one activity", scope: Scope{ActivityID: id(11)}, want: []int64{11}},
+		{name: "unknown category", scope: Scope{CategoryID: id(99)}, wantErr: ErrCategoryNotFound},
+		{name: "unknown activity", scope: Scope{ActivityID: id(99)}, wantErr: ErrActivityNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := p.ActivityIDs(tt.scope)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("got %v, want nil (no filter)", got)
+				}
+				return
+			}
+			if tt.wantErr == nil && (got == nil || !sameIDs(got, tt.want)) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func sameIDs(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[int64]bool{}
+	for _, v := range a {
+		seen[v] = true
+	}
+	for _, v := range b {
+		if !seen[v] {
+			return false
+		}
+	}
+	return true
+}

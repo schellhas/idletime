@@ -104,6 +104,13 @@ check "stats: total"              "True" "$(echo "$STATS" | jq_ 'd["totalMinutes
 check "stats: sports share target" "True" "$(echo "$STATS" | jq_ 'abs([s for s in d["shares"] if s["name"]=="Sports"][0]["targetShare"] - 2/3.3) < 0.001')"
 check "stats: bad zone"           400 "$(code -b $JAR "$BASE/stats?tz=Nope/Nowhere")"
 check "stats: bad days"           400 "$(code -b $JAR "$BASE/stats?days=0x")"
+check "stats: one activity"       "True" "$(body -b $JAR "$BASE/stats?days=7&activityId=$SWIM" | jq_ 'd["periodMinutes"] == 45')"
+check "stats: category incl. children" "True" "$(body -b $JAR "$BASE/stats?days=7&categoryId=$SPORTS" | jq_ 'd["periodMinutes"] >= 46')"
+check "stats: other category"     "True" "$(body -b $JAR "$BASE/stats?days=7&categoryId=$CARE" | jq_ 'd["periodMinutes"] == 30')"
+check "stats: scope keeps shares" "True" "$(body -b $JAR "$BASE/stats?days=7&activityId=$SWIM" | jq_ 'len(d["shares"]) == 8')"
+check "stats: category and activity" 400 "$(code -b $JAR "$BASE/stats?categoryId=$SPORTS&activityId=$SWIM")"
+check "stats: unknown activity"   404 "$(code -b $JAR "$BASE/stats?activityId=999999")"
+check "stats: foreign activity"   404 "$(code -b $JAR_B "$BASE/stats?activityId=$SWIM")"
 
 # --- export and deletion cascade
 EXPORT=$(body -b $JAR $BASE/me/export)

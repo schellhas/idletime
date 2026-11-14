@@ -68,8 +68,20 @@ export interface Stats {
   daily: DayMinutes[];
 }
 
-export function getStats(days: number): Promise<Stats> {
+/** Restricts the daily series to one category (with everything below it) or one activity. */
+export interface StatsScope {
+  categoryId?: number;
+  activityId?: number;
+}
+
+export function getStats(days: number, scope: StatsScope = {}): Promise<Stats> {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const params = new URLSearchParams({ days: String(days), tz: timeZone });
+  if (scope.categoryId !== undefined) {
+    params.set("categoryId", String(scope.categoryId));
+  }
+  if (scope.activityId !== undefined) {
+    params.set("activityId", String(scope.activityId));
+  }
   return http.get<Stats>(`/stats?${params.toString()}`);
 }

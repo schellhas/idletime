@@ -78,11 +78,13 @@ Run the parts locally for development:
 The app
 ~~~~~~~
 
-* Now: tell it how much time you have and it suggests what to do. "Start timer" times the
+* Now: tell it how much time you have (a preset or any number of minutes) and it suggests
+  what to do. "Start timer" times the
   activity on the server (a running timer survives reloads and works across devices),
   "Skip" suggests the next one, "Log time" adds time after the fact.
 * Library: manage categories (nestable) and activities with their multipliers and minimum time.
-* Progress: time per day, and target vs. actual share for every category and activity.
+* Progress: time per day (for everything, or narrowed to one category or activity), and
+  target vs. actual share for every category and activity.
 
 How the suggestion works: every category and activity has a multiplier, its weight among
 its siblings (the subcategories and activities directly below the same category). The

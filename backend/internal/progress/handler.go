@@ -55,7 +55,7 @@ func (h *Handler) recommend(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// stats answers GET /stats?days=30&tz=Europe/Berlin
+// stats answers GET /stats?days=30&tz=Europe/Berlin[&categoryId=2|&activityId=5]
 func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 	u, ok := auth.CurrentUser(w, r)
 	if !ok {
@@ -71,12 +71,33 @@ func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 		days = parsed
 	}
 
-	stats, err := h.service.Stats(r.Context(), u.ID, days, r.URL.Query().Get("tz"))
+	scope, err := parseScope(r)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	stats, err := h.service.Stats(r.Context(), u.ID, days, r.URL.Query().Get("tz"), scope)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, stats)
+}
+
+func parseScope(r *http.Request) (Scope, error) {
+	query := r.URL.Query()
+	var scope Scope
+	for name, target := range map[string]**int64{"categoryId": &scope.CategoryID, "activityId": &scope.ActivityID} {
+		if raw := query.Get(name); raw != "" {
+			id, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil {
+				return Scope{}, fmt.Errorf("%s must be a number", name)
+			}
+			*target = &id
+		}
+	}
+	return scope, nil
 }
 
 func parseOptions(r *http.Request) (Options, error) {
@@ -111,8 +132,15 @@ func parseOptions(r *http.Request) (Options, error) {
 }
 
 func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, validation.ErrInvalid) {
+	switch {
+	case errors.Is(err, validation.ErrInvalid):
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_input", err.Error())
+		return
+	case errors.Is(err, ErrCategoryNotFound):
+		httpx.WriteError(w, http.StatusNotFound, "category_not_found", err.Error())
+		return
+	case errors.Is(err, ErrActivityNotFound):
+		httpx.WriteError(w, http.StatusNotFound, "activity_not_found", err.Error())
 		return
 	}
 	slog.ErrorContext(r.Context(), "progress request failed", "error", err)

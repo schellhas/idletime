@@ -54,7 +54,7 @@ func (f *fakeRepository) List(_ context.Context, _ int64, filter ListFilter) ([]
 	return f.rows, nil
 }
 
-func (f *fakeRepository) MinutesPerDay(context.Context, int64, string, time.Time) ([]DayMinutes, error) {
+func (f *fakeRepository) MinutesPerDay(context.Context, int64, string, time.Time, []int64) ([]DayMinutes, error) {
 	return nil, nil
 }
 

@@ -3,9 +3,11 @@ import { useState } from "react";
 import type { Category } from "../../api/categories";
 import { useAsyncAction } from "../../hooks/useAsyncAction";
 import { formatMinutes } from "../../lib/format";
+import { Field } from "../../ui/Field";
 import { Message } from "../../ui/Message";
 import { categoryOptions } from "../library/libraryTree";
 import { LogTimeForm } from "./LogTimeForm";
+import { MAX_SLOT_MINUTES, parseSlotMinutes } from "./slot";
 import { useRecommendation } from "./useRecommendation";
 
 /** Time slots offered as one-tap choices. 0 means "no limit". */
@@ -24,11 +26,26 @@ interface SuggestionPanelProps {
 
 export function SuggestionPanel({ categories, onStart, onLogged, refreshSignal }: SuggestionPanelProps) {
   const [availableMinutes, setAvailableMinutes] = useState(DEFAULT_SLOT_MINUTES);
+  // What the user typed into the free input; empty while a preset is chosen.
+  const [customMinutes, setCustomMinutes] = useState("");
   const [categoryId, setCategoryId] = useState<number | undefined>(undefined);
   const [logging, setLogging] = useState(false);
 
   const { state, skip, resetSkips, skippedCount, refresh } = useRecommendation({ availableMinutes, categoryId });
   const start = useAsyncAction();
+
+  function choosePreset(minutes: number) {
+    setCustomMinutes("");
+    setAvailableMinutes(minutes);
+  }
+
+  function typeCustom(value: string) {
+    setCustomMinutes(value);
+    const minutes = parseSlotMinutes(value);
+    if (minutes !== null) {
+      setAvailableMinutes(minutes);
+    }
+  }
 
   // Re-ask after the page logged time elsewhere.
   const [seenSignal, setSeenSignal] = useState(refreshSignal);
@@ -47,14 +64,26 @@ export function SuggestionPanel({ categories, onStart, onLogged, refreshSignal }
           <button
             key={minutes}
             type="button"
-            className={`chip${availableMinutes === minutes ? " chip--active" : ""}`}
-            aria-pressed={availableMinutes === minutes}
-            onClick={() => setAvailableMinutes(minutes)}
+            className={`chip${customMinutes === "" && availableMinutes === minutes ? " chip--active" : ""}`}
+            aria-pressed={customMinutes === "" && availableMinutes === minutes}
+            onClick={() => choosePreset(minutes)}
           >
             {minutes === 0 ? "Any" : formatMinutes(minutes)}
           </button>
         ))}
       </fieldset>
+
+      <Field
+        label="Or enter your own time (minutes)"
+        type="number"
+        inputMode="numeric"
+        min="1"
+        max={MAX_SLOT_MINUTES}
+        step="1"
+        placeholder="e.g. 25"
+        value={customMinutes}
+        onChange={(e) => typeCustom(e.target.value)}
+      />
 
       {categories.length > 0 && (
         <label className="field">

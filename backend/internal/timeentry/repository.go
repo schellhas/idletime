@@ -78,13 +78,14 @@ func (r *PostgresRepository) List(ctx context.Context, userID int64, f ListFilte
 	return entries, nil
 }
 
-// MinutesPerDay sums minutes per calendar day in timeZone, oldest day first.
-func (r *PostgresRepository) MinutesPerDay(ctx context.Context, userID int64, timeZone string, since time.Time) ([]DayMinutes, error) {
+// MinutesPerDay sums minutes per calendar day in timeZone, oldest day first. A nil
+// activityIDs counts every activity, otherwise only the listed ones.
+func (r *PostgresRepository) MinutesPerDay(ctx context.Context, userID int64, timeZone string, since time.Time, activityIDs []int64) ([]DayMinutes, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT to_char((logged_at AT TIME ZONE $2::text)::date, 'YYYY-MM-DD') AS day, SUM(minutes)::int
 		FROM time_entries
-		WHERE user_id = $1 AND logged_at >= $3
-		GROUP BY day ORDER BY day`, userID, timeZone, since)
+		WHERE user_id = $1 AND logged_at >= $3 AND ($4::bigint[] IS NULL OR activity_id = ANY($4))
+		GROUP BY day ORDER BY day`, userID, timeZone, since, activityIDs)
 	if err != nil {
 		return nil, fmt.Errorf("query minutes per day: %w", err)
 	}

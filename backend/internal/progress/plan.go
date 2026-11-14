@@ -18,8 +18,11 @@ import (
 	"github.com/schellhas/idletime/backend/internal/category"
 )
 
-// ErrCategoryNotFound is returned when a recommendation is scoped to an unknown category.
-var ErrCategoryNotFound = errors.New("category not found")
+// Errors for scopes that point to something that does not exist.
+var (
+	ErrCategoryNotFound = errors.New("category not found")
+	ErrActivityNotFound = errors.New("activity not found")
+)
 
 // epsilon is the tolerance when comparing progress ratios.
 const epsilon = 1e-9
@@ -49,13 +52,14 @@ type node struct {
 type Plan struct {
 	roots      []*node
 	categories map[int64]*node
+	activities map[int64]*node
 }
 
 // NewPlan builds the tree. Categories without any activity below them are left out: they
 // can never be recommended, so they must not claim a share of the total either.
 // Activities pointing to an unknown category are ignored.
 func NewPlan(categories []category.Category, activities []activity.Activity) *Plan {
-	p := &Plan{categories: make(map[int64]*node, len(categories))}
+	p := &Plan{categories: make(map[int64]*node, len(categories)), activities: make(map[int64]*node, len(activities))}
 	for _, c := range categories {
 		p.categories[c.ID] = &node{kind: KindCategory, id: c.ID, name: c.Name, weight: c.Multiplier}
 	}
@@ -74,10 +78,12 @@ func NewPlan(categories []category.Category, activities []activity.Activity) *Pl
 		if !ok {
 			continue
 		}
-		parent.children = append(parent.children, &node{
+		child := &node{
 			kind: KindActivity, id: a.ID, name: a.Name, weight: a.Multiplier,
 			activity: a, tracked: a.TrackedMinutes, parent: parent,
-		})
+		}
+		parent.children = append(parent.children, child)
+		p.activities[a.ID] = child
 	}
 
 	p.roots = pruneAndSort(p.roots)
@@ -127,6 +133,48 @@ func (p *Plan) TotalMinutes() int {
 		total += root.tracked
 	}
 	return total
+}
+
+// Scope narrows statistics to one category (including everything below it) or to one
+// activity. The zero value means everything. Set at most one of the two fields.
+type Scope struct {
+	CategoryID *int64
+	ActivityID *int64
+}
+
+// IsSet reports whether the scope restricts anything.
+func (s Scope) IsSet() bool { return s.CategoryID != nil || s.ActivityID != nil }
+
+// ActivityIDs lists the activities inside the scope. It returns nil for the zero scope and
+// ErrCategoryNotFound / ErrActivityNotFound for unknown ids. A known category without any
+// activity yields an empty, non-nil list.
+func (p *Plan) ActivityIDs(scope Scope) ([]int64, error) {
+	switch {
+	case scope.ActivityID != nil:
+		n, ok := p.activities[*scope.ActivityID]
+		if !ok {
+			return nil, ErrActivityNotFound
+		}
+		return []int64{n.id}, nil
+	case scope.CategoryID != nil:
+		n, ok := p.categories[*scope.CategoryID]
+		if !ok {
+			return nil, ErrCategoryNotFound
+		}
+		ids := []int64{}
+		var collect func(*node)
+		collect = func(n *node) {
+			if n.kind == KindActivity {
+				ids = append(ids, n.id)
+			}
+			for _, child := range n.children {
+				collect(child)
+			}
+		}
+		collect(n)
+		return ids, nil
+	}
+	return nil, nil
 }
 
 // Options narrows a recommendation.

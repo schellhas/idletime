@@ -29,7 +29,7 @@ type ActivitySource interface {
 
 // DailySource sums a user's logged time per calendar day.
 type DailySource interface {
-	MinutesPerDay(ctx context.Context, userID int64, timeZone string, since time.Time) ([]timeentry.DayMinutes, error)
+	MinutesPerDay(ctx context.Context, userID int64, timeZone string, since time.Time, activityIDs []int64) ([]timeentry.DayMinutes, error)
 }
 
 // Service answers "what should I do next?" and "how am I doing?".
@@ -58,18 +58,24 @@ func (s *Service) Recommend(ctx context.Context, userID int64, o Options) (Recom
 type Stats struct {
 	// TotalMinutes is all time ever tracked.
 	TotalMinutes int `json:"totalMinutes"`
-	// PeriodMinutes is the time tracked within the last Days days.
+	// PeriodMinutes is the time tracked within the last Days days, within the requested scope.
 	PeriodMinutes int `json:"periodMinutes"`
 	Days          int `json:"days"`
-	// Shares compares target and actual time distribution over all time.
+	// Shares compares target and actual time distribution over all time and all activities,
+	// whatever scope was requested.
 	Shares []Share `json:"shares"`
-	// Daily has one entry per day of the period, oldest first, including days without time.
+	// Daily has one entry per day of the period, oldest first, including days without time,
+	// within the requested scope.
 	Daily []timeentry.DayMinutes `json:"daily"`
 }
 
 // Stats computes the user's statistics. days is the length of the daily chart (1-365,
-// default 30) and timeZone an IANA name such as "Europe/Berlin" (default UTC).
-func (s *Service) Stats(ctx context.Context, userID int64, days int, timeZone string) (Stats, error) {
+// default 30) and timeZone an IANA name such as "Europe/Berlin" (default UTC). The scope
+// narrows the daily series to one category or activity.
+func (s *Service) Stats(ctx context.Context, userID int64, days int, timeZone string, scope Scope) (Stats, error) {
+	if scope.CategoryID != nil && scope.ActivityID != nil {
+		return Stats{}, validation.Errorf("choose either a category or an activity, not both")
+	}
 	if days == 0 {
 		days = defaultStatsDays
 	}
@@ -89,11 +95,18 @@ func (s *Service) Stats(ctx context.Context, userID int64, days int, timeZone st
 		return Stats{}, err
 	}
 
+	activityIDs, err := plan.ActivityIDs(scope)
+	if err != nil {
+		return Stats{}, err
+	}
+
 	today := s.now().In(location)
 	first := time.Date(today.Year(), today.Month(), today.Day()-(days-1), 0, 0, 0, 0, location)
-	logged, err := s.daily.MinutesPerDay(ctx, userID, timeZone, first)
-	if err != nil {
-		return Stats{}, fmt.Errorf("daily minutes: %w", err)
+	var logged []timeentry.DayMinutes
+	if !scope.IsSet() || len(activityIDs) > 0 { // a scope without activities has nothing to sum
+		if logged, err = s.daily.MinutesPerDay(ctx, userID, timeZone, first, activityIDs); err != nil {
+			return Stats{}, fmt.Errorf("daily minutes: %w", err)
+		}
 	}
 
 	daily, period := fillDays(first, days, logged)
